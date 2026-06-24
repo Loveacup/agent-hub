@@ -12,8 +12,3 @@ state:
 
 observability:
   enabled: true
-
-cron: []
-
-# Workers are added dynamically via `iii worker add`
-# See workers/ directory for source code
