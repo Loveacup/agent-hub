@@ -1,0 +1,19 @@
+# agent-hub · iii Engine Config
+# iii v0.19.7 · M4 Mac mini
+
+name: agent-hub
+version: "0.1.0"
+
+engine:
+  port: 49134
+
+state:
+  enabled: true
+
+observability:
+  enabled: true
+
+cron: []
+
+# Workers are added dynamically via `iii worker add`
+# See workers/ directory for source code
