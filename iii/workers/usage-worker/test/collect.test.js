@@ -1,7 +1,7 @@
 // Phase 1 usage-worker — 编排层单测 (依赖注入, 不触真实 npx/nats/fs)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCheck, buildNatsPublishFrame, defaultExec } from '../src/collect.js';
+import { runCheck, buildNatsPublishFrame, defaultExec, resolveDefaultStatePath } from '../src/collect.js';
 
 const ccusageOut = {
   daily: [
@@ -77,6 +77,24 @@ test('runCheck 支持注入 ccusageJson/env payload（iii trigger 集成测试�
   assert.equal(r.limit, 1000);
   assert.equal(r.alerted, true);
   assert.equal(published.length, 1);
+});
+
+test('resolveDefaultStatePath 在 iii VM 内优先写回 host-mounted /mnt/host-src/state', () => {
+  const path = resolveDefaultStatePath({
+    env: { III_ISOLATION: 'libkrun' },
+    existsFn: (p) => p === '/mnt/host-src',
+    repoStatePath: '/workspace/../state/usage-worker.json',
+  });
+  assert.equal(path, '/mnt/host-src/state/usage-worker.json');
+});
+
+test('resolveDefaultStatePath 在 host 端回退 repo state 路径', () => {
+  const path = resolveDefaultStatePath({
+    env: {},
+    existsFn: () => false,
+    repoStatePath: '/repo/state/usage-worker.json',
+  });
+  assert.equal(path, '/repo/state/usage-worker.json');
 });
 
 test('defaultExec 返回 Promise，避免 execFileSync 阻塞事件循环', () => {

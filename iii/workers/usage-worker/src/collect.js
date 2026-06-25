@@ -3,7 +3,7 @@
 // runCheck 接收注入的 deps (默认真实实现), 便于单测替身。
 import { execFile } from 'node:child_process';
 import { connect } from 'node:net';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -17,9 +17,15 @@ import {
 } from './usage.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// 默认 repo-root/state/usage-worker.json; 可用 USAGE_STATE_PATH 覆盖 (VM 内运行时有用)。
-export const STATE_PATH = process.env.USAGE_STATE_PATH
-  || resolve(__dirname, '../../../../state/usage-worker.json');
+// 默认 repo-root/state/usage-worker.json；iii VM 内优先写回 host mount，便于 Hermes/host 侧验证与审计。
+const REPO_STATE_PATH = resolve(__dirname, '../../../../state/usage-worker.json');
+export function resolveDefaultStatePath({ env = process.env, existsFn = existsSync, repoStatePath = REPO_STATE_PATH } = {}) {
+  if (env.III_ISOLATION && existsFn('/mnt/host-src')) {
+    return '/mnt/host-src/state/usage-worker.json';
+  }
+  return repoStatePath;
+}
+export const STATE_PATH = process.env.USAGE_STATE_PATH || resolveDefaultStatePath();
 const NATS_SUBJECT = 'agent.usage.alert';
 // iii VM 内访问宿主通常走 100.96.0.1；宿主直接运行时可用 NATS_URL 覆盖为 127.0.0.1。
 const NATS_SERVER = process.env.NATS_URL || 'nats://100.96.0.1:4222';

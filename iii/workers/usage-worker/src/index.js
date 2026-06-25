@@ -2,7 +2,7 @@
 // 把 runCheck 注册成 usage::check, 并每分钟自动采集 (A1/A3)。
 // 纯逻辑/编排在 usage.js / collect.js, 本文件只做 iii 接线。
 import { registerWorker } from 'iii-sdk';
-import { runCheck } from './collect.js';
+import { runCheck, defaultReadState } from './collect.js';
 
 const engineWsUrl = process.env.III_URL ?? 'ws://localhost:49134';
 const COLLECT_INTERVAL_MS = Number(process.env.USAGE_COLLECT_INTERVAL_MS) || 60_000;
@@ -17,6 +17,9 @@ iii.registerFunction('usage::check', async (data = {}) => {
     envOverrides: data.envOverrides ?? data.env ?? {},
   });
 });
+
+// A3: 查询 worker-local state。iii VM overlay 内文件不保证 host 可直接读，所以状态查询也走 worker 函数。
+iii.registerFunction('usage::state', async () => defaultReadState());
 
 // A3: 每分钟自动采集, 超阈值时由 runCheck 内部 pub agent.usage.alert (A4)。
 const timer = setInterval(() => {
