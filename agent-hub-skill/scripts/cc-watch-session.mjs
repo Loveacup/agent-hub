@@ -5,18 +5,22 @@ import { execFile } from 'node:child_process';
 import { appendFile } from 'node:fs/promises';
 import {
   buildWatchEvent,
+  buildInterventionSuggestion,
+  normalizeWatchState,
   shouldEmitWatchEvent,
   shouldStopWatch,
+  shouldSuggestIntervention,
 } from '../../iii/workers/cc-worker/src/watchLoop.js';
 
 function parseArgs(argv) {
-  const args = { interval_ms: 15000, max_ticks: 120, output: '' };
+  const args = { interval_ms: 15000, max_ticks: 120, output: '', stale_after_ticks: 0 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--session') args.session_id = argv[++i];
     else if (a === '--interval-ms') args.interval_ms = Number(argv[++i]);
     else if (a === '--max-ticks') args.max_ticks = Number(argv[++i]);
     else if (a === '--output') args.output = argv[++i];
+    else if (a === '--stale-after-ticks') args.stale_after_ticks = Number(argv[++i]);
     else if (a === '--iii-bin') args.iii_bin = argv[++i];
     else if (a === '--address') args.address = argv[++i];
     else if (a === '--port') args.port = argv[++i];
@@ -27,7 +31,7 @@ function parseArgs(argv) {
 }
 
 function usage() {
-  return `Usage: cc-watch-session.mjs --session <tmux-session> [--interval-ms 15000] [--max-ticks 120] [--output /tmp/watch.jsonl]\n`;
+  return `Usage: cc-watch-session.mjs --session <tmux-session> [--interval-ms 15000] [--max-ticks 120] [--stale-after-ticks 0] [--output /tmp/watch.jsonl]\n`;
 }
 
 function runIiiMonitor({ session_id, iii_bin = `${process.env.HOME || '/Users/alexcai'}/.local/bin/iii`, address = 'localhost', port = '49134' }) {
@@ -66,10 +70,25 @@ async function main() {
   }
 
   let previous = null;
+  let repeatedTicks = 0;
   for (let sequence = 1; sequence <= args.max_ticks; sequence += 1) {
     const monitor = await runIiiMonitor(args);
-    const event = buildWatchEvent({ session_id: args.session_id, sequence, monitor });
-    if (shouldEmitWatchEvent(previous, monitor) || event.terminal) await emit(event, args.output);
+    const state = normalizeWatchState(monitor);
+    const previousState = previous ? normalizeWatchState(previous) : null;
+    repeatedTicks = previousState === state ? repeatedTicks + 1 : 1;
+    const suggestion = shouldSuggestIntervention({
+      repeated_ticks: repeatedTicks,
+      stale_after_ticks: args.stale_after_ticks,
+      monitor,
+    }) ? buildInterventionSuggestion({
+      session_id: args.session_id,
+      state,
+      repeated_ticks: repeatedTicks,
+      interval_ms: args.interval_ms,
+      monitor_snapshot_id: monitor.monitor_snapshot_id ?? null,
+    }) : null;
+    const event = buildWatchEvent({ session_id: args.session_id, sequence, monitor, suggestion });
+    if (shouldEmitWatchEvent(previous, monitor) || event.terminal || suggestion) await emit(event, args.output);
     if (shouldStopWatch(monitor)) process.exit(monitor.status === 'error' ? 1 : 0);
     previous = monitor;
     if (sequence < args.max_ticks) await new Promise((r) => setTimeout(r, args.interval_ms));

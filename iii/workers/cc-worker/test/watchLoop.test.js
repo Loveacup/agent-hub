@@ -7,11 +7,13 @@ const {
   shouldStopWatch,
   buildWatchEvent,
   shouldEmitWatchEvent,
+  buildInterventionSuggestion,
+  shouldSuggestIntervention,
 } = await (async () => {
   try {
     return await import('../src/watchLoop.js');
   } catch {
-    return { normalizeWatchState: null, shouldStopWatch: null, buildWatchEvent: null, shouldEmitWatchEvent: null };
+    return { normalizeWatchState: null, shouldStopWatch: null, buildWatchEvent: null, shouldEmitWatchEvent: null, buildInterventionSuggestion: null, shouldSuggestIntervention: null };
   }
 })();
 
@@ -51,4 +53,40 @@ test('shouldEmitWatchEvent emits first event and state changes, suppresses repea
   assert.equal(shouldEmitWatchEvent({ state: 'THINKING' }, { state: 'THINKING' }), false);
   assert.equal(shouldEmitWatchEvent({ state: 'THINKING' }, { state: 'TOOL' }), true);
   assert.equal(shouldEmitWatchEvent({ state: 'THINKING' }, { status: 'error', error: 'x' }), true);
+});
+
+test('shouldSuggestIntervention triggers on repeated non-terminal state after threshold', () => {
+  assert.ok(shouldSuggestIntervention, 'shouldSuggestIntervention must be implemented');
+  assert.equal(shouldSuggestIntervention({ repeated_ticks: 2, stale_after_ticks: 3, monitor: { state: 'THINKING', status: 'ok' } }), false);
+  assert.equal(shouldSuggestIntervention({ repeated_ticks: 3, stale_after_ticks: 3, monitor: { state: 'THINKING', status: 'ok' } }), true);
+  assert.equal(shouldSuggestIntervention({ repeated_ticks: 5, stale_after_ticks: 3, monitor: { state: 'COMPLETED', status: 'ok' } }), false);
+  assert.equal(shouldSuggestIntervention({ repeated_ticks: 5, stale_after_ticks: 3, monitor: { status: 'error' } }), false);
+});
+
+test('buildInterventionSuggestion produces auditable suggestion and never auto-intervenes', () => {
+  assert.ok(buildInterventionSuggestion, 'buildInterventionSuggestion must be implemented');
+  const suggestion = buildInterventionSuggestion({
+    session_id: 'hermes-cc-default-agent-hub-0625-1600',
+    state: 'THINKING',
+    repeated_ticks: 4,
+    interval_ms: 15000,
+    monitor_snapshot_id: 'snap-1',
+  });
+  assert.equal(suggestion.kind, 'cc.intervention.suggestion');
+  assert.equal(suggestion.auto_execute, false);
+  assert.equal(suggestion.session_id, 'hermes-cc-default-agent-hub-0625-1600');
+  assert.equal(suggestion.reason, 'state_stale');
+  assert.match(suggestion.message, /still THINKING/i);
+  assert.equal(suggestion.monitor_snapshot_id, 'snap-1');
+});
+
+test('buildWatchEvent attaches suggestion when supplied', () => {
+  const suggestion = { kind: 'cc.intervention.suggestion', auto_execute: false };
+  const event = buildWatchEvent({
+    session_id: 's',
+    sequence: 2,
+    monitor: { state: 'THINKING', status: 'ok' },
+    suggestion,
+  });
+  assert.equal(event.suggestion, suggestion);
 });

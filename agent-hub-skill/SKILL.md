@@ -192,10 +192,13 @@ Hermes 需要持续盯一个 CC session 时，用 bounded watcher，不要手动
   --session hermes-cc-default-agent-hub-0625-1600 \
   --interval-ms 15000 \
   --max-ticks 120 \
+  --stale-after-ticks 8 \
   --output /tmp/agent-hub-cc-watch.jsonl
 ```
 
 它只在首帧、状态变化、终态输出 JSONL；终态 `COMPLETED/BLOCKED/FREEZE/error` 自动退出。`max-ticks` 用尽会输出 `status: timeout` 并 exit 2，避免 watcher 永久挂死。
+
+`--stale-after-ticks N` 只生成 `cc.intervention.suggestion`，不会自动调用 `cc::intervene`。suggestion 必须由 Hermes/用户审核后才可转成真实干预。
 
 `cc::intervene` 会把干预内容写到持久 `/tmp/agent-hub-cc-intervention-<session>-<ts>.md`，避免 CC 延迟读取时 context 被提前删除。
 
