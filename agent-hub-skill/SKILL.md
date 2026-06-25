@@ -86,6 +86,7 @@ CC 基础层:  Phase 0 ✅ → Phase 1 🔵 usage → Phase 2 🔵 gc → Phase 
 | `agent.codex.<id>.*` | codex-worker | Hermes | Codex 会话（Phase 4） |
 | `agent.omp.<id>.*` | omp-worker | Hermes | OMP 管线（Phase 5） |
 | `agent.usage.alert` | usage-worker | Hermes | 用量告警 |
+| `agent.gc.report` | gc-worker | Hermes | GC 扫描/计划报告 |
 | `agent.state.*` | 任意 worker | 任意 worker | JetStream KV 共享状态 |
 
 ## 快速启动
@@ -124,6 +125,32 @@ Hermes 查用量必须走 agent-hub wrapper，不直接跑 `npx ccusage`：
 ```
 
 注意：usage-worker 运行在 iii VM 内，默认看不到宿主 Claude 日志；若 VM 内 `ccusage` 返回 `daily: []`，worker 会降级到 `totals.totalTokens` 并返回 warning。真实宿主用量采集后续应走 host-side collector 或日志挂载。
+
+## gc-worker 查询
+
+Hermes 查 GC 报告走 agent-hub wrapper；默认是 dry-run `gc::scan`，只报告 actions，不删除文件、不 kill 进程：
+
+```bash
+III_CONFIG=~/code/agent-hub/iii/config.yaml \
+  ~/code/agent-hub/agent-hub-skill/scripts/gc-report.sh
+```
+
+等价于：
+
+```bash
+~/.local/bin/iii trigger gc::scan \
+  --json '{}' \
+  --address localhost \
+  --port 49134 \
+  --timeout-ms 30000
+```
+
+执行清理必须显式走 `gc::execute` 且传入 `confirm:true`；高风险 action 还需要 `confirmedActionIds` 精确确认：
+
+```bash
+GC_FUNCTION=gc::execute ~/code/agent-hub/agent-hub-skill/scripts/gc-report.sh \
+  '{"confirm":true,"actions":[{"id":"delete_file:/tmp/cc-old","kind":"delete_file","path_or_pid":"/tmp/cc-old","risk":"low","reason":"stale","requires_confirm":false}]}'
+```
 
 ## 渐进迁移
 

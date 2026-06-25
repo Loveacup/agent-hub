@@ -11,3 +11,5 @@ workers:
     # 'iii-queue': value now lives in the configuration worker at ./data/configuration/iii-queue.yaml. Edit at runtime via 'iii config set iii-queue' (or 'configuration::set'); this block is no longer read.
   - name: usage-worker
     worker_path: /Users/alexcai/code/agent-hub/iii/workers/usage-worker
+  - name: gc-worker
+    worker_path: /Users/alexcai/code/agent-hub/iii/workers/gc-worker

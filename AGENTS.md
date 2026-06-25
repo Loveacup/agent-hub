@@ -5,16 +5,17 @@
 
 ## 是什么
 
-agent-hub = iii-powered agent hub for Hermes。用 iii Engine 作为 Hub 层，把 cc-tmux 的 CC 管理能力包装成 iii worker，提供 `call()` 接口。
+agent-hub = iii-powered agent hub for Hermes。用 iii Engine 作为 Hub 层，把 CC、Codex 等真实生产力 worker 包装成可观测、可调度的 worker lane，提供 `call()` 接口。
 
 **和 cc-tmux 的关系**：cc-tmux 是裸金属驱动层（tmux 操控、send-keys、freeze 检测、gate 脚本）。agent-hub 是上层 Hub，不改变 cc-tmux 一行代码——cc-tmux 保持零 iii 依赖。
 
 ## Core Principles
 
-1. **iii 做 Hub，cc-tmux 做执行** —— 通信/状态/注册表归 iii，PTY 操控归 cc-tmux
-2. **cc-tmux 零改动** —— agent-hub 只调用 cc-tmux 脚本，不修改它
-3. **渐进迁移** —— Hermes 可同时使用 cc-tmux（文件通信）和 agent-hub（call 通信）
-4. **止损在 Phase 3** —— 如果 cc-worker 对接成本 > NATS 自建，果断换轨
+1. **iii / NATS / Kanban 只做控制面** —— 通信、状态、注册表、追踪和人工 gate 归控制面；实际推理与产出归 CC / Codex 等 worker lane
+2. **CC 与 Codex 是主生产力 worker** —— Phase 3 先把 cc-tmux 包成 cc-worker；Phase 4 再用 `codex exec` / app-server 包成 codex-worker
+3. **cc-tmux 零改动** —— agent-hub 只调用 cc-tmux 脚本，不修改它
+4. **渐进迁移** —— Hermes 可同时使用 cc-tmux（文件通信）、Codex CLI 和 agent-hub（call 通信）
+5. **止损在 Phase 3** —— 如果 cc-worker 对接成本 > NATS 自建，果断换轨
 
 ## 目录结构
 
@@ -29,7 +30,8 @@ agent-hub/
 │   └── workers/
 │       ├── usage-worker/       # Phase 1: 用量追踪
 │       ├── gc-worker/          # Phase 2: Session GC
-│       └── cc-worker/          # Phase 3: CC session 管理
+│       ├── cc-worker/          # Phase 3: CC session 管理（wrap cc-tmux，无 fork）
+│       └── codex-worker/       # Phase 4: Codex exec/app-server lane
 ├── agent-hub-skill/
 │   └── SKILL.md                # Hermes agent-hub skill
 └── tests/
@@ -43,9 +45,20 @@ agent-hub/
 | 0 | 装 iii + POC 验证 | ✅ |
 | 1 | usage-worker · 替代 cc-usage.sh | 🔵 |
 | 2 | gc-worker · 替代 cc-gc.sh | 🔵 |
-| 3 | cc-worker · CC session 包成 worker | 🔵 |
-| 4 | review-worker · 独立审计 | 🔵 |
-| 5 | 全 Hub · 多 worker + 自动路由 | 🔵 |
+| 3 | cc-worker · wrap cc-tmux（不 fork） | 🔵 |
+| 4 | codex-worker · Codex exec/app-server lane | 🔵 |
+| 5 | review-worker · 独立审计 | 🔵 |
+| 6 | 全 Hub · 多 worker + 自动路由 | 🔵 |
+
+## Worker lane 分工
+
+| Lane | 执行引擎 | agent-hub 职责 | 禁止事项 |
+|------|----------|----------------|----------|
+| `cc-worker` | cc-tmux + Claude Code | 统一 session 生命周期、状态事件、turn-done/freeze 转译、gate 结果回传 | 不 fork / 不改 cc-tmux；不绕过 cc-tmux 的安全门控 |
+| `codex-worker` | Codex CLI `codex exec` / app-server | 非 PTY 执行、流式状态、最终消息/产物捕获、取消与超时治理 | 不强塞 tmux；不把 Codex 变成长期 PTY session |
+| `usage-worker` / `gc-worker` | 本地脚本 + iii | 用量/GC 辅助能力 | 不承担主任务执行 |
+
+控制面边界：iii 负责 worker catalog / call / trace，NATS 负责跨 worker event bus，Kanban 负责人类 gate 和 durable handoff。它们不替代 CC/Codex 的推理与工程执行能力。
 
 ## 止损线（Phase 3 go/no-go）
 
