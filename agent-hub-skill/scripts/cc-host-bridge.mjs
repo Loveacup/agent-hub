@@ -3,8 +3,7 @@
 // Host-side JSON bridge from iii VM cc-worker to cc-tmux scripts.
 import http from 'node:http';
 import { execFile } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import {
@@ -12,6 +11,7 @@ import {
   buildBridgeResponse,
   buildMonitorRequiredRefusal,
   buildInterruptRefusal,
+  buildInterventionContextPath,
 } from '../../iii/workers/cc-worker/src/hostBridge.js';
 import { executeFlow } from '../../iii/workers/cc-worker/src/executeFlow.js';
 
@@ -94,23 +94,19 @@ async function intervene(req) {
     }
   }
 
-  const dir = await mkdtemp(join(tmpdir(), 'agent-hub-cc-intervene-'));
-  const contextPath = join(dir, 'context.md');
-  try {
-    await writeFile(contextPath, `${req.message || ''}\n\nReason: ${req.reason || 'not specified'}\n`, 'utf8');
-    const sent = await sendContext(req.session_id, contextPath);
-    const after = await monitor(req.session_id);
-    return buildBridgeResponse('cc.intervention', {
-      session_id: req.session_id,
-      status: sent.ok ? 'sent' : 'send_failed',
-      send_exit_code: sent.exit_code,
-      stderr: sent.stderr,
-      monitor_before: before,
-      monitor_after: after,
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  const contextPath = buildInterventionContextPath({ session_id: req.session_id });
+  await writeFile(contextPath, `${req.message || ''}\n\nReason: ${req.reason || 'not specified'}\n`, 'utf8');
+  const sent = await sendContext(req.session_id, contextPath);
+  const after = await monitor(req.session_id);
+  return buildBridgeResponse('cc.intervention', {
+    session_id: req.session_id,
+    status: sent.ok ? 'sent' : 'send_failed',
+    send_exit_code: sent.exit_code,
+    stderr: sent.stderr,
+    context_path: contextPath,
+    monitor_before: before,
+    monitor_after: after,
+  });
 }
 
 async function execute(req) {

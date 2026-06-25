@@ -7,6 +7,7 @@ const {
   buildBridgeResponse,
   buildMonitorRequiredRefusal,
   buildInterruptRefusal,
+  buildInterventionContextPath,
 } = await (async () => {
   try {
     return await import('../src/hostBridge.js');
@@ -16,6 +17,7 @@ const {
       buildBridgeResponse: null,
       buildMonitorRequiredRefusal: null,
       buildInterruptRefusal: null,
+      buildInterventionContextPath: null,
     };
   }
 })();
@@ -51,4 +53,10 @@ test('buildBridgeResponse always includes kind/source/ts', () => {
   assert.equal(res.kind, 'cc.monitor');
   assert.equal(res.source, 'cc-host-bridge');
   assert.ok(res.ts);
+});
+
+test('buildInterventionContextPath returns persistent /tmp path, not ephemeral mkdtemp dir', () => {
+  assert.ok(buildInterventionContextPath, 'buildInterventionContextPath must be implemented');
+  const path = buildInterventionContextPath({ session_id: 'hermes-cc-default-agent-hub-0625-1600', now_ms: 12345 });
+  assert.equal(path, '/tmp/agent-hub-cc-intervention-hermes-cc-default-agent-hub-0625-1600-12345.md');
 });

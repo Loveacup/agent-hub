@@ -177,6 +177,8 @@ Worker 默认从 VM 访问 `http://100.96.0.1:8767/control`，可用 `CC_HOST_BR
 
 `cc::execute` 新建 session 时走 `cc-start.sh → cc-monitor.sh → cc-send.sh → cc-monitor.sh`。若 cc-start 检测到其它活跃 CC（exit 3），worker 返回 `active_sessions_require_ack`，不会自动 `--ack-active`。
 
+`cc::intervene` 会把干预内容写到持久 `/tmp/agent-hub-cc-intervention-<session>-<ts>.md`，避免 CC 延迟读取时 context 被提前删除。
+
 安全契约：
 
 - bridge 只接受 `execute / monitor / intervene / interrupt` 白名单动作。

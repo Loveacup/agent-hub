@@ -25,6 +25,11 @@ export function buildBridgeResponse(kind, fields = {}) {
   };
 }
 
+export function buildInterventionContextPath({ session_id = 'unknown', now_ms = Date.now() } = {}) {
+  const safeSession = String(session_id).replace(/[^A-Za-z0-9._-]/g, '_');
+  return `/tmp/agent-hub-cc-intervention-${safeSession}-${now_ms}.md`;
+}
+
 export function buildMonitorRequiredRefusal({ session_id = '' } = {}) {
   return buildBridgeResponse('cc.intervention', {
     session_id,
