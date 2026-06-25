@@ -48,7 +48,7 @@ agent-hub/
 | 2 | gc-worker · 替代 cc-gc.sh | 🔵 |
 | 3 | cc-worker · wrap cc-tmux（不 fork） | 🔵 |
 | 4 | codex-worker · Codex exec/app-server lane | 🔵 |
-| 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive） | 🟡 Spec |
+| 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive） | 🟡 Slice 1 |
 | 6 | omp-worker / 多 CLI 并行 + review-worker | 🔵 |
 
 ## Worker lane 分工
