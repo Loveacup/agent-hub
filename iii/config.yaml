@@ -15,3 +15,5 @@ workers:
     worker_path: /Users/alexcai/code/agent-hub/iii/workers/gc-worker
   - name: codex-worker
     worker_path: /Users/alexcai/code/agent-hub/iii/workers/codex-worker
+  - name: cc-worker
+    worker_path: /Users/alexcai/code/agent-hub/iii/workers/cc-worker

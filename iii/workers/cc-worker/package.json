@@ -1,0 +1,13 @@
+{
+  "name": "cc-worker",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Phase 3 cc-worker — cc-tmux status adapter for agent-hub",
+  "scripts": {
+    "dev": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "iii-sdk": "^0.19.0"
+  }
+}
