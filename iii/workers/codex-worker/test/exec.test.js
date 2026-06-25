@@ -12,11 +12,12 @@ const {
   buildCodexCommand,
   parseCodexOutput,
   verifyLastMessageMatch,
+  execCodexTask,
 } = await (async () => {
   try {
     return await import('../src/exec.js');
   } catch {
-    return { buildCodexCommand: null, parseCodexOutput: null, verifyLastMessageMatch: null };
+    return { buildCodexCommand: null, parseCodexOutput: null, verifyLastMessageMatch: null, execCodexTask: null };
   }
 })();
 
@@ -39,8 +40,8 @@ test('buildCodexCommand sets workdir when provided', () => {
     workdir: '/Users/alexcai/code/agent-hub',
   });
 
-  assert.ok(cmd.args.includes('--workdir'));
-  const idx = cmd.args.indexOf('--workdir');
+  assert.ok(cmd.args.includes('--cd'));
+  const idx = cmd.args.indexOf('--cd');
   assert.equal(cmd.args[idx + 1], '/Users/alexcai/code/agent-hub');
 });
 
@@ -72,19 +73,32 @@ test('buildCodexCommand default sandbox is read-only', () => {
   assert.equal(cmd.args[idx + 1], 'read-only');
 });
 
-test('buildCodexCommand includes timeout_ms when specified', () => {
+test('buildCodexCommand stores timeout_ms in metadata without passing unsupported CLI flag', () => {
   const cmd = buildCodexCommand({ prompt: 'long task', timeout_ms: 300000 });
-  assert.ok(cmd.args.includes('--timeout'));
-  const idx = cmd.args.indexOf('--timeout');
-  assert.equal(cmd.args[idx + 1], '300000');
+  assert.equal(cmd._meta.timeoutMs, 300000);
+  assert.equal(cmd.args.includes('--timeout'), false);
 });
 
-test('buildCodexCommand output paths go to /tmp/agent-hub-codex-*', () => {
+test('buildCodexCommand uses --json without path and stores stdout path in metadata', () => {
+  const cmd = buildCodexCommand({ prompt: 'test' });
+
+  const jsonIdx = cmd.args.indexOf('--json');
+  assert.ok(jsonIdx >= 0);
+  assert.doesNotMatch(cmd.args[jsonIdx + 1] ?? '', /^\/tmp\/agent-hub-codex-/);
+  assert.match(cmd._meta.outputJsonl, /^\/tmp\/agent-hub-codex-/);
+});
+
+test('buildCodexCommand output-last-message path goes to /tmp/agent-hub-codex-*', () => {
   const cmd = buildCodexCommand({ prompt: 'test' });
 
   const outputIdx = cmd.args.indexOf('--output-last-message');
   const path = cmd.args[outputIdx + 1];
   assert.match(path, /^\/tmp\/agent-hub-codex-/);
+});
+
+test('buildCodexCommand skips git repo check because iii worker workspace is not the host repo', () => {
+  const cmd = buildCodexCommand({ prompt: 'test' });
+  assert.ok(cmd.args.includes('--skip-git-repo-check'));
 });
 
 test('buildCodexCommand appends prompt as last argument', () => {
@@ -151,3 +165,86 @@ test('verifyLastMessageMatch returns false when file missing', async () => {
   const match = await verifyLastMessageMatch('/tmp/agent-hub-codex-nonexistent.txt', '');
   assert.equal(match, false);
 });
+
+// ═══════ execCodexTask real-spawn wrapper ═══════
+
+test('execCodexTask spawns codex and captures stdout JSONL plus last-message byte-match', async () => {
+  assert.ok(execCodexTask, 'execCodexTask must be implemented');
+
+  const writes = [];
+  const result = await execCodexTask({ prompt: 'say hello' }, {
+    spawnFn: (bin, args) => {
+      assert.equal(bin, 'codex');
+      assert.equal(args[0], 'exec');
+      assert.ok(args.includes('--json'));
+      return fakeChild({ stdout: ['{"type":"message"}\n'], exitCode: 0 });
+    },
+    appendFileFn: async (path, chunk) => writes.push([path, chunk.toString()]),
+    readFileFn: async () => Buffer.from('hello from codex'),
+    nowFn: (() => {
+      let t = 1000;
+      return () => { t += 10; return t; };
+    })(),
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(result.exit_code, 0);
+  assert.equal(result.last_message, 'hello from codex');
+  assert.equal(result.match_ok, true);
+  assert.ok(writes.some(([, chunk]) => chunk.includes('"type":"message"')));
+});
+
+test('execCodexTask marks non-zero codex exit as failed and keeps stderr tail', async () => {
+  const result = await execCodexTask({ prompt: 'fail' }, {
+    spawnFn: () => fakeChild({ stderr: ['bad things'], exitCode: 2 }),
+    appendFileFn: async () => {},
+    readFileFn: async () => Buffer.from(''),
+  });
+
+  assert.equal(result.status, 'failed');
+  assert.equal(result.exit_code, 2);
+  assert.match(result.error, /bad things/);
+});
+
+test('execCodexTask returns error when codex binary cannot spawn', async () => {
+  const result = await execCodexTask({ prompt: 'missing' }, {
+    spawnFn: () => fakeChild({ spawnError: new Error('spawn codex ENOENT') }),
+    appendFileFn: async () => {},
+    readFileFn: async () => Buffer.from(''),
+  });
+
+  assert.equal(result.status, 'error');
+  assert.equal(result.exit_code, -1);
+  assert.match(result.error, /ENOENT/);
+});
+
+function fakeChild({ stdout = [], stderr = [], exitCode = 0, spawnError = null } = {}) {
+  const handlers = new Map();
+  const stream = () => ({
+    on(event, fn) {
+      if (!handlers.has(event)) handlers.set(event, []);
+      handlers.get(event).push(fn);
+      return this;
+    },
+  });
+  const child = {
+    stdout: stream(),
+    stderr: stream(),
+    kill() { child.killed = true; },
+    on(event, fn) {
+      if (!handlers.has(event)) handlers.set(event, []);
+      handlers.get(event).push(fn);
+      return child;
+    },
+  };
+  queueMicrotask(() => {
+    if (spawnError) {
+      for (const fn of handlers.get('error') ?? []) fn(spawnError);
+      return;
+    }
+    for (const chunk of stdout) for (const fn of handlers.get('data') ?? []) fn(Buffer.from(chunk));
+    for (const chunk of stderr) for (const fn of handlers.get('data') ?? []) fn(Buffer.from(chunk));
+    for (const fn of handlers.get('close') ?? []) fn(exitCode, null);
+  });
+  return child;
+}

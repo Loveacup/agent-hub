@@ -1,12 +1,16 @@
-// Phase 4 codex-worker — exec module
-// Builds Codex CLI commands, parses output, verifies byte-match integrity.
+// Phase 4b codex-worker — exec module
+// Builds Codex CLI commands, spawns real `codex exec`, captures JSONL stdout,
+// and verifies last-message byte-match integrity.
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile, rm } from 'node:fs/promises';
 
 const VALID_SANDBOXES = new Set(['read-only', 'workspace-write']);
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 
 /**
- * Build a Codex CLI command string and argument array.
+ * Build a Codex CLI command and argument array.
+ * Codex 0.142: `--json` prints JSONL to stdout, `--output-last-message <file>` writes final message.
  *
  * @param {object} opts
  * @param {string} opts.prompt
@@ -15,7 +19,7 @@ const VALID_SANDBOXES = new Set(['read-only', 'workspace-write']);
  * @param {string}  [opts.model]
  * @param {boolean} [opts.ephemeral=true]
  * @param {number}  [opts.timeout_ms]
- * @returns {{ cmd: string, args: string[], _meta: { jobId: string, outputJsonl: string, lastMsgPath: string } }}
+ * @returns {{ cmd: string, args: string[], _meta: { jobId: string, outputJsonl: string, lastMsgPath: string, timeoutMs: number } }}
  */
 export function buildCodexCommand({
   prompt,
@@ -40,12 +44,15 @@ export function buildCodexCommand({
   const jobId = `codex-${randomUUID().slice(0, 8)}`;
   const outputJsonl = `/tmp/agent-hub-codex-${jobId}.jsonl`;
   const lastMsgPath = `/tmp/agent-hub-codex-${jobId}.txt`;
+  const timeoutMs = Number.isFinite(timeout_ms) && timeout_ms > 0 ? timeout_ms : DEFAULT_TIMEOUT_MS;
 
   const args = [
     'codex', 'exec',
-    '--json', outputJsonl,
+    '--json',
     '--output-last-message', lastMsgPath,
     '--sandbox', sandbox,
+    '--skip-git-repo-check',
+    '--color', 'never',
   ];
 
   if (ephemeral) {
@@ -53,15 +60,11 @@ export function buildCodexCommand({
   }
 
   if (workdir) {
-    args.push('--workdir', workdir);
+    args.push('--cd', workdir);
   }
 
   if (model) {
     args.push('--model', model);
-  }
-
-  if (timeout_ms && typeof timeout_ms === 'number' && timeout_ms > 0) {
-    args.push('--timeout', String(timeout_ms));
   }
 
   args.push(prompt);
@@ -69,7 +72,7 @@ export function buildCodexCommand({
   return {
     cmd: args.join(' '),
     args,
-    _meta: { jobId, outputJsonl, lastMsgPath },
+    _meta: { jobId, outputJsonl, lastMsgPath, timeoutMs },
   };
 }
 
@@ -78,26 +81,31 @@ export function buildCodexCommand({
  *
  * @param {string} stdoutPath
  * @param {string} lastMessage
- * @param {{ exitCode?: number, durationMs?: number }} [opts]
- * @returns {{ kind: string, source: string, job_id: string, exit_code: number, status: string, last_message: string, stdout_path: string, last_message_path: string, duration_ms: number, diff_summary: object, ts: string }}
+ * @param {{ exitCode?: number, durationMs?: number, jobId?: string, lastMsgPath?: string, error?: string }} [opts]
  */
-export function parseCodexOutput(stdoutPath, lastMessage, { exitCode = 0, durationMs } = {}) {
-  const now = new Date().toISOString();
+export function parseCodexOutput(stdoutPath, lastMessage, {
+  exitCode = 0,
+  durationMs,
+  jobId = '',
+  lastMsgPath = '',
+  error = '',
+} = {}) {
   const status = exitCode === 0 ? 'succeeded' : 'failed';
-
-  return {
+  const result = {
     kind: 'codex.result',
     source: 'codex-worker',
-    job_id: '',
+    job_id: jobId,
     exit_code: exitCode,
     status,
     last_message: lastMessage,
     stdout_path: stdoutPath,
-    last_message_path: '',
+    last_message_path: lastMsgPath,
     duration_ms: durationMs ?? 0,
     diff_summary: { dirty: false, files: [] },
-    ts: now,
+    ts: new Date().toISOString(),
   };
+  if (error) result.error = error;
+  return result;
 }
 
 /**
@@ -105,33 +113,138 @@ export function parseCodexOutput(stdoutPath, lastMessage, { exitCode = 0, durati
  *
  * @param {string} filePath
  * @param {string} lastMessage
+ * @param {(path:string)=>Promise<Buffer|string>} [readFileFn]
  * @returns {Promise<boolean>}
  */
-export async function verifyLastMessageMatch(filePath, lastMessage) {
+export async function verifyLastMessageMatch(filePath, lastMessage, readFileFn = readFile) {
   try {
-    const buf = await readFile(filePath);
-    return buf.toString() === lastMessage;
+    const buf = await readFileFn(filePath);
+    const actual = Buffer.isBuffer(buf) ? buf.toString() : String(buf);
+    return actual === lastMessage;
   } catch {
     return false;
   }
 }
 
 /**
- * Execute a codex task — Phase 4a stub returns mock result.
- * Real implementation (child_process.spawn) goes into Phase 4b when
- * codex is actually installed in the VM sandbox.
+ * Execute a codex task by spawning `codex exec`.
+ * Dependency injection is used for TDD; production uses child_process.spawn and fs.
  *
  * @param {object} opts
+ * @param {object} [deps]
+ * @param {typeof spawn} [deps.spawnFn]
+ * @param {(path:string, data:Buffer|string)=>Promise<void>} [deps.appendFileFn]
+ * @param {(path:string)=>Promise<Buffer|string>} [deps.readFileFn]
+ * @param {(path:string, opts?:object)=>Promise<void>} [deps.rmFn]
+ * @param {()=>number} [deps.nowFn]
  * @returns {Promise<object>}
  */
-export async function execCodexTask(opts) {
-  const { _meta } = buildCodexCommand(opts);
+export async function execCodexTask(opts, {
+  spawnFn = spawn,
+  appendFileFn = appendFile,
+  readFileFn = readFile,
+  rmFn = rm,
+  nowFn = Date.now,
+} = {}) {
+  let built;
+  try {
+    built = buildCodexCommand(opts);
+  } catch (err) {
+    return buildErrorResult('', '', '', -1, `invalid request: ${err.message}`, 0);
+  }
 
-  // Phase 4a stub: returns valid shape without spawning real Codex.
-  // Tests validate command-building, parsing, and byte-match independently.
-  const result = parseCodexOutput(_meta.outputJsonl, '', { exitCode: 0, durationMs: 0 });
-  result.job_id = _meta.jobId;
-  result.last_message_path = _meta.lastMsgPath;
+  const { args, _meta } = built;
+  const start = nowFn();
+  const bin = args[0];
+  const childArgs = args.slice(1);
+  let stderr = '';
+  let settled = false;
 
-  return result;
+  try {
+    await rmFn(_meta.outputJsonl, { force: true });
+  } catch {}
+
+  return await new Promise((resolve) => {
+    let child;
+    let timer;
+
+    const finish = async (exitCode, error = '') => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+
+      const durationMs = Math.max(0, nowFn() - start);
+      let lastMessage = '';
+      try {
+        const content = await readFileFn(_meta.lastMsgPath);
+        lastMessage = Buffer.isBuffer(content) ? content.toString() : String(content);
+      } catch {
+        lastMessage = '';
+      }
+
+      if (exitCode === -1) {
+        resolve(buildErrorResult(_meta.jobId, _meta.outputJsonl, _meta.lastMsgPath, -1, error, durationMs));
+        return;
+      }
+
+      const result = parseCodexOutput(_meta.outputJsonl, lastMessage, {
+        exitCode,
+        durationMs,
+        jobId: _meta.jobId,
+        lastMsgPath: _meta.lastMsgPath,
+        error: error || (exitCode === 0 ? '' : stderr.slice(-1000)),
+      });
+      result.match_ok = await verifyLastMessageMatch(_meta.lastMsgPath, lastMessage, readFileFn);
+      resolve(result);
+    };
+
+    try {
+      child = spawnFn(bin, childArgs, {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env },
+      });
+    } catch (err) {
+      finish(-1, `failed to spawn codex: ${err.message}`);
+      return;
+    }
+
+    timer = setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch {}
+      finish(-1, `codex exec timed out after ${_meta.timeoutMs}ms`);
+    }, _meta.timeoutMs);
+
+    child.stdout?.on('data', (chunk) => {
+      appendFileFn(_meta.outputJsonl, chunk).catch(() => {});
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (err) => {
+      finish(-1, `failed to spawn codex: ${err.message}`);
+    });
+    child.on('close', (code, signal) => {
+      if (signal) {
+        finish(-1, `codex exec killed by signal ${signal}`);
+        return;
+      }
+      finish(code ?? 0);
+    });
+  });
+}
+
+function buildErrorResult(jobId, stdoutPath, lastMsgPath, exitCode, error, durationMs) {
+  return {
+    kind: 'codex.result',
+    source: 'codex-worker',
+    job_id: jobId,
+    exit_code: exitCode,
+    status: 'error',
+    last_message: '',
+    stdout_path: stdoutPath,
+    last_message_path: lastMsgPath,
+    duration_ms: durationMs,
+    diff_summary: { dirty: false, files: [] },
+    error,
+    ts: new Date().toISOString(),
+  };
 }

@@ -55,7 +55,7 @@ agent-hub/
 | Lane | 执行引擎 | agent-hub 职责 | 禁止事项 |
 |------|----------|----------------|----------|
 | `cc-worker` | cc-tmux + Claude Code | 统一 session 生命周期、状态事件、turn-done/freeze 转译、gate 结果回传 | 不 fork / 不改 cc-tmux；不绕过 cc-tmux 的安全门控 |
-| `codex-worker` | Codex CLI `codex exec` / app-server | 非 PTY 执行、流式状态、最终消息/产物捕获、取消与超时治理 | 不强塞 tmux；不把 Codex 变成长期 PTY session |
+| `codex-worker` | Codex CLI `codex exec` / app-server | 非 PTY 执行、流式状态、stdout JSONL 捕获、最终消息 byte-match、取消与超时治理 | 不强塞 tmux；不把 Codex 变成长期 PTY session |
 | `usage-worker` / `gc-worker` | 本地脚本 + iii | 用量/GC 辅助能力 | 不承担主任务执行 |
 
 控制面边界：iii 负责 worker catalog / call / trace，NATS 负责跨 worker event bus，Kanban 负责人类 gate 和 durable handoff。它们不替代 CC/Codex 的推理与工程执行能力。
