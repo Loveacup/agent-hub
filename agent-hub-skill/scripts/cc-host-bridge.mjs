@@ -140,6 +140,21 @@ async function handle(req) {
 }
 
 const server = http.createServer(async (request, response) => {
+  if (request.method === 'GET' && request.url === '/healthz') {
+    if (TOKEN && request.headers['x-agent-hub-token'] !== TOKEN) {
+      response.writeHead(401).end('unauthorized');
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({
+      kind: 'cc.bridge.health',
+      status: 'ok',
+      token_required: Boolean(TOKEN),
+      scripts_dir: CC_TMUX_SCRIPTS,
+      ts: new Date().toISOString(),
+    }));
+    return;
+  }
   if (request.method !== 'POST' || request.url !== '/control') {
     response.writeHead(404).end('not found');
     return;

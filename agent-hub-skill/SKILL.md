@@ -175,7 +175,13 @@ Worker 默认从 VM 访问 `http://100.96.0.1:8767/control`，可用 `CC_HOST_BR
 ~/code/agent-hub/agent-hub-skill/scripts/provision-cc-bridge-token.sh
 ```
 
-`cc::execute` 新建 session 时走 `cc-start.sh → cc-monitor.sh → cc-send.sh → cc-monitor.sh`。若 cc-start 检测到其它活跃 CC（exit 3），worker 返回 `active_sessions_require_ack`，不会自动 `--ack-active`。
+`cc::execute` 新建 session 时走 `cc-start.sh → cc-monitor.sh → cc-send.sh → cc-monitor.sh`。返回 `status: sent` 仅表示指令已送达，不代表任务完成；`lifecycle_state: sent_not_completed` 是强提醒。若 cc-start 检测到其它活跃 CC（exit 3），worker 返回 `active_sessions_require_ack`，不会自动 `--ack-active`。
+
+可用 `cc::bridge_status` 检查 host bridge 是否在线、token 是否可用：
+
+```bash
+iii trigger cc::bridge_status --json '{}'
+```
 
 `cc::intervene` 会把干预内容写到持久 `/tmp/agent-hub-cc-intervention-<session>-<ts>.md`，避免 CC 延迟读取时 context 被提前删除。
 

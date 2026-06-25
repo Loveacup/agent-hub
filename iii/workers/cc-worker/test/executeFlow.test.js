@@ -59,6 +59,7 @@ test('executeFlow starts new session, sends context, then monitors', async () =>
 
   assert.equal(res.kind, 'cc.execute');
   assert.equal(res.status, 'sent');
+  assert.equal(res.lifecycle_state, 'sent_not_completed');
   assert.equal(res.session_id, 'hermes-cc-default-agent-hub-0625-1530');
   assert.equal(res.monitor_before.status, 'ok');
   assert.equal(res.monitor_after.status, 'ok');

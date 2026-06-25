@@ -109,6 +109,7 @@ export async function executeFlow(req = {}, {
     source: 'cc-host-bridge',
     session_id: session,
     status: send.ok ? 'sent' : 'send_failed',
+    lifecycle_state: send.ok ? 'sent_not_completed' : 'send_failed',
     start: startResult ? { exit_code: startResult.exit_code } : null,
     send_exit_code: send.exit_code,
     stderr: send.stderr || '',

@@ -3,7 +3,7 @@
 import { registerWorker } from 'iii-sdk';
 import { scanSessions, capturePaneFallback } from './scan.js';
 import { buildPoolStatus, buildSessionStatus, discoverSessions, publishFrame } from './publish.js';
-import { callHostBridge } from './bridgeClient.js';
+import { callHostBridge, checkHostBridge } from './bridgeClient.js';
 
 const ENGINE_URL = process.env.III_ENGINE_URL || process.env.III_URL || 'ws://localhost:49134';
 
@@ -52,6 +52,10 @@ iii.registerFunction('cc::publish_status', async () => {
 });
 
 // ─── Phase 3b control functions — delegate to host bridge ───
+
+iii.registerFunction('cc::bridge_status', async () => {
+  return checkHostBridge();
+});
 
 iii.registerFunction('cc::monitor', async (data = {}) => {
   return callHostBridge({ action: 'monitor', session_id: data.session_id ?? '' });
