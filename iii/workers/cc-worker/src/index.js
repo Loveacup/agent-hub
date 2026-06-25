@@ -86,6 +86,9 @@ iii.registerFunction('cc::execute', async (data = {}) => {
     topic: data.topic ?? null,
     mode: data.mode ?? 'discuss-first',
     timeout_ms: data.timeout_ms,
+    effort: data.effort ?? 'high',
+    model: data.model ?? 'claude-opus-4-8',
+    ack_active: data.ack_active === true,
   });
 });
 

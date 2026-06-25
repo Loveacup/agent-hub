@@ -6,16 +6,27 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import {
   validateBridgeRequest,
   buildBridgeResponse,
   buildMonitorRequiredRefusal,
   buildInterruptRefusal,
 } from '../../iii/workers/cc-worker/src/hostBridge.js';
+import { executeFlow } from '../../iii/workers/cc-worker/src/executeFlow.js';
 
 const PORT = Number(process.env.CC_HOST_BRIDGE_PORT || 8767);
 const HOST = process.env.CC_HOST_BRIDGE_HOST || '0.0.0.0';
-const TOKEN = process.env.CC_HOST_BRIDGE_TOKEN || '';
+function readTokenFile() {
+  const path = process.env.CC_HOST_BRIDGE_TOKEN_FILE || `${process.env.HOME || '/Users/alexcai'}/.agent-hub/cc-host-bridge.token`;
+  try {
+    return readFileSync(path, 'utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+const TOKEN = process.env.CC_HOST_BRIDGE_TOKEN || readTokenFile();
 if (!TOKEN && process.env.CC_HOST_BRIDGE_ALLOW_NO_TOKEN !== '1') {
   console.error('CC_HOST_BRIDGE_TOKEN required (set CC_HOST_BRIDGE_ALLOW_NO_TOKEN=1 only for local smoke tests)');
   process.exit(1);
@@ -103,31 +114,7 @@ async function intervene(req) {
 }
 
 async function execute(req) {
-  if (!req.session_id) {
-    return buildBridgeResponse('cc.execute', {
-      status: 'refused',
-      error: 'start_not_implemented_in_phase3b_slice',
-      detail: 'Pass an existing session_id; start parsing will be implemented after monitor/intervene loop is stable.',
-    });
-  }
-  const before = await monitor(req.session_id);
-  if (before.status !== 'ok') {
-    return buildBridgeResponse('cc.execute', {
-      status: 'refused',
-      error: 'monitor_failed',
-      monitor: before,
-    });
-  }
-  const sent = await sendContext(req.session_id, req.context_path);
-  const after = await monitor(req.session_id);
-  return buildBridgeResponse('cc.execute', {
-    session_id: req.session_id,
-    status: sent.ok ? 'sent' : 'send_failed',
-    send_exit_code: sent.exit_code,
-    stderr: sent.stderr,
-    monitor_before: before,
-    monitor_after: after,
-  });
+  return executeFlow(req, { runFn: run, scriptsDir: CC_TMUX_SCRIPTS });
 }
 
 async function interrupt(req) {

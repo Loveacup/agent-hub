@@ -1,4 +1,6 @@
 // Phase 3b cc-worker — VM-to-host bridge client
+import { resolveBridgeToken } from './token.js';
+
 const DEFAULT_BRIDGE_BASE_URL = 'http://100.96.0.1:8767';
 
 export function buildBridgeUrl(path = '/control', baseUrl = process.env.CC_HOST_BRIDGE_URL || DEFAULT_BRIDGE_BASE_URL) {
@@ -9,7 +11,7 @@ export function buildBridgeUrl(path = '/control', baseUrl = process.env.CC_HOST_
 
 export async function callHostBridge(payload, {
   fetchFn = globalThis.fetch,
-  token = process.env.CC_HOST_BRIDGE_TOKEN || '',
+  token = resolveBridgeToken(),
   baseUrl = process.env.CC_HOST_BRIDGE_URL || DEFAULT_BRIDGE_BASE_URL,
 } = {}) {
   try {
