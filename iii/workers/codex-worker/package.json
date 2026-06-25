@@ -1,0 +1,13 @@
+{
+  "name": "codex-worker",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Phase 4 codex-worker — Codex CLI exec lane for agent-hub",
+  "scripts": {
+    "dev": "node src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "iii-sdk": "^0.19.0"
+  }
+}
