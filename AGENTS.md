@@ -30,7 +30,7 @@ agent-hub/
 │       ├── usage-worker/       # Phase 1: 用量追踪
 │       ├── gc-worker/          # Phase 2: Session GC
 │       └── cc-worker/          # Phase 3: CC session 管理
-├── hermes-skill/
+├── agent-hub-skill/
 │   └── SKILL.md                # Hermes agent-hub skill
 └── tests/
     └── ...

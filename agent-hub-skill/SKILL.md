@@ -103,7 +103,7 @@ cd ~/code/agent-hub/iii && ~/.local/bin/iii --config config.yaml &
 Hermes 查用量必须走 agent-hub wrapper，不直接跑 `npx ccusage`：
 
 ```bash
-~/code/agent-hub/hermes-skill/scripts/usage-check.sh
+~/code/agent-hub/agent-hub-skill/scripts/usage-check.sh
 ```
 
 等价于：
@@ -119,7 +119,7 @@ Hermes 查用量必须走 agent-hub wrapper，不直接跑 `npx ccusage`：
 测试/集成时可注入 payload：
 
 ```bash
-~/code/agent-hub/hermes-skill/scripts/usage-check.sh \
+~/code/agent-hub/agent-hub-skill/scripts/usage-check.sh \
   '{"ccusageJson":{"daily":[{"date":"2026-06-25","totalTokens":1200}]},"envOverrides":{"CC_MAX_TOKENS":"1000"}}'
 ```
 
