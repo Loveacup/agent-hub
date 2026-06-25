@@ -194,6 +194,39 @@ test('execCodexTask spawns codex and captures stdout JSONL plus last-message byt
   assert.ok(writes.some(([, chunk]) => chunk.includes('"type":"message"')));
 });
 
+test('execCodexTask injects VM-to-host proxy env when process env has no proxy', async () => {
+  let capturedEnv = null;
+  const result = await execCodexTask({ prompt: 'proxy check' }, {
+    spawnFn: (_bin, _args, options) => {
+      capturedEnv = options.env;
+      return fakeChild({ stdout: ['{}\n'], exitCode: 0 });
+    },
+    appendFileFn: async () => {},
+    readFileFn: async () => Buffer.from('ok'),
+    baseEnv: {},
+  });
+
+  assert.equal(result.status, 'succeeded');
+  assert.equal(capturedEnv.HTTPS_PROXY, 'http://100.96.0.1:6152');
+  assert.equal(capturedEnv.HTTP_PROXY, 'http://100.96.0.1:6152');
+  assert.match(capturedEnv.NO_PROXY, /127\.0\.0\.1/);
+});
+
+test('execCodexTask respects CODEX_WORKER_PROXY_URL override', async () => {
+  let capturedEnv = null;
+  await execCodexTask({ prompt: 'proxy override' }, {
+    spawnFn: (_bin, _args, options) => {
+      capturedEnv = options.env;
+      return fakeChild({ stdout: ['{}\n'], exitCode: 0 });
+    },
+    appendFileFn: async () => {},
+    readFileFn: async () => Buffer.from('ok'),
+    baseEnv: { CODEX_WORKER_PROXY_URL: 'http://proxy.example:8080' },
+  });
+
+  assert.equal(capturedEnv.HTTPS_PROXY, 'http://proxy.example:8080');
+});
+
 test('execCodexTask marks non-zero codex exit as failed and keeps stderr tail', async () => {
   const result = await execCodexTask({ prompt: 'fail' }, {
     spawnFn: () => fakeChild({ stderr: ['bad things'], exitCode: 2 }),

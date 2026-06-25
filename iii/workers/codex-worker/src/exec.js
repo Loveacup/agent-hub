@@ -7,6 +7,8 @@ import { appendFile, readFile, rm } from 'node:fs/promises';
 
 const VALID_SANDBOXES = new Set(['read-only', 'workspace-write']);
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_VM_HOST_PROXY = 'http://100.96.0.1:6152';
+const LOCAL_PROXY_RE = /^http:\/\/(127\.0\.0\.1|localhost):6152\/?$/i;
 
 /**
  * Build a Codex CLI command and argument array.
@@ -127,6 +129,47 @@ export async function verifyLastMessageMatch(filePath, lastMessage, readFileFn =
 }
 
 /**
+ * Build environment for Codex CLI inside iii VM.
+ * Host proxy `127.0.0.1:6152` is unusable inside VM; rewrite to iii host gateway.
+ * Set CODEX_WORKER_PROXY_URL=direct to opt out, or set it to a proxy URL to override.
+ */
+export function buildCodexEnv(baseEnv = process.env) {
+  const env = { ...baseEnv };
+  const override = env.CODEX_WORKER_PROXY_URL;
+
+  let proxy = override && override !== 'direct'
+    ? override
+    : (env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy || '');
+
+  if (!override && (!proxy || LOCAL_PROXY_RE.test(proxy))) {
+    proxy = DEFAULT_VM_HOST_PROXY;
+  }
+
+  if (override === 'direct') {
+    delete env.HTTP_PROXY;
+    delete env.HTTPS_PROXY;
+    delete env.ALL_PROXY;
+    delete env.http_proxy;
+    delete env.https_proxy;
+    delete env.all_proxy;
+  } else if (proxy) {
+    env.HTTP_PROXY = proxy;
+    env.HTTPS_PROXY = proxy;
+    env.http_proxy = proxy;
+    env.https_proxy = proxy;
+  }
+
+  const noProxy = env.NO_PROXY || env.no_proxy || '';
+  const essentials = ['127.0.0.1', 'localhost', '::1', '100.96.0.1'];
+  const merged = new Set(noProxy.split(',').map((x) => x.trim()).filter(Boolean));
+  for (const item of essentials) merged.add(item);
+  env.NO_PROXY = [...merged].join(',');
+  env.no_proxy = env.NO_PROXY;
+
+  return env;
+}
+
+/**
  * Execute a codex task by spawning `codex exec`.
  * Dependency injection is used for TDD; production uses child_process.spawn and fs.
  *
@@ -137,6 +180,7 @@ export async function verifyLastMessageMatch(filePath, lastMessage, readFileFn =
  * @param {(path:string)=>Promise<Buffer|string>} [deps.readFileFn]
  * @param {(path:string, opts?:object)=>Promise<void>} [deps.rmFn]
  * @param {()=>number} [deps.nowFn]
+ * @param {NodeJS.ProcessEnv} [deps.baseEnv]
  * @returns {Promise<object>}
  */
 export async function execCodexTask(opts, {
@@ -145,6 +189,7 @@ export async function execCodexTask(opts, {
   readFileFn = readFile,
   rmFn = rm,
   nowFn = Date.now,
+  baseEnv = process.env,
 } = {}) {
   let built;
   try {
@@ -201,7 +246,7 @@ export async function execCodexTask(opts, {
     try {
       child = spawnFn(bin, childArgs, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: buildCodexEnv(baseEnv),
       });
     } catch (err) {
       finish(-1, `failed to spawn codex: ${err.message}`);

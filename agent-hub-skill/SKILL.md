@@ -48,10 +48,12 @@ license: Apache-2.0
 
 ## 当前状态
 
-**Phase 0 ✅ · Phase 1 🔵**
+**Phase 0-4c ✅**
 
 - iii Engine v0.19.7 + NATS Server v2.x 已安装
-- Phase 0 POC 通过（iii 跨 worker call + NATS pub/sub）
+- usage-worker / gc-worker / cc-worker / codex-worker 均已接入 iii
+- codex-worker 已支持真实 `codex exec` spawn、stdout JSONL 捕获、last-message byte-match
+- iii VM 内 Codex 出网需走宿主 Surge：worker 会把 `127.0.0.1:6152` 改写为 `100.96.0.1:6152`
 - 代码仓库: `~/code/agent-hub/` · GitHub: `Loveacup/agent-hub`
 - OB 文档: `20-Areas/20_技术项目/agent-hub/10_核心/`
 
@@ -151,6 +153,32 @@ III_CONFIG=~/code/agent-hub/iii/config.yaml \
 GC_FUNCTION=gc::execute ~/code/agent-hub/agent-hub-skill/scripts/gc-report.sh \
   '{"confirm":true,"actions":[{"id":"delete_file:/tmp/cc-old","kind":"delete_file","path_or_pid":"/tmp/cc-old","risk":"low","reason":"stale","requires_confirm":false}]}'
 ```
+
+## codex-worker 查询 / 真实执行
+
+codex-worker 已支持真实 `codex exec`。首次启动或 `iii worker reinstall/clear` 后，VM 内没有 host Codex OAuth，需要临时 provision auth（不写入 git，不打印 token）：
+
+```bash
+~/code/agent-hub/agent-hub-skill/scripts/provision-codex-auth.sh
+```
+
+执行 smoke：
+
+```bash
+~/.local/bin/iii trigger codex::exec \
+  --json '{"prompt":"Reply with exactly: agent-hub-ok","sandbox":"read-only","timeout_ms":300000}' \
+  --address localhost \
+  --port 49134 \
+  --timeout-ms 330000
+```
+
+成功条件：
+
+```json
+{"kind":"codex.result","status":"succeeded","exit_code":0,"last_message":"agent-hub-ok","match_ok":true}
+```
+
+网络注意：iii VM 直连 OpenAI DNS 可能 timeout；worker 会默认注入 `HTTP_PROXY/HTTPS_PROXY=http://100.96.0.1:6152`。可用 `CODEX_WORKER_PROXY_URL` 覆盖，或设为 `direct` 禁用。
 
 ## 渐进迁移
 
