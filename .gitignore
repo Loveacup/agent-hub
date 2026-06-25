@@ -1,0 +1,8 @@
+# agent-hub runtime artifacts
+iii/data/
+
+# dependencies
+iii/workers/*/node_modules/
+
+# local env
+.env

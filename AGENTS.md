@@ -59,4 +59,5 @@ agent-hub/
 - TDD：实现类先写测试
 - cc-tmux 脚本路径：`~/.hermes/skills/autonomous-ai-agents/cc-tmux/scripts/`
 - iii engine 路径：`~/.local/bin/iii`
-- 所有 worker 用 TypeScript（iii-sdk + Node）
+- worker 优先用纯 JS + `node:test` 起步，除非进入复杂类型边界再升 TypeScript
+- npm 依赖新增需显式留账；`iii-sdk` 版本先贴 iii engine 大版本

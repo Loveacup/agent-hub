@@ -1,14 +1,13 @@
 # agent-hub · iii Engine Config
-# iii v0.19.7 · M4 Mac mini
+# iii v0.19.7
+# Generated shape verified with `iii project init --skip-iii` on 2026-06-25.
+# Engine WebSocket default: ws://localhost:49134
 
-name: agent-hub
-version: "0.1.0"
+workers:
+  - name: iii-observability
+    # 'iii-observability': value now lives in the configuration worker at ./data/configuration/iii-observability.yaml. Edit at runtime via 'iii config set iii-observability' (or 'configuration::set'); this block is no longer read.
 
-engine:
-  port: 49134
-
-state:
-  enabled: true
-
-observability:
-  enabled: true
+  - name: iii-queue
+    # 'iii-queue': value now lives in the configuration worker at ./data/configuration/iii-queue.yaml. Edit at runtime via 'iii config set iii-queue' (or 'configuration::set'); this block is no longer read.
+  - name: usage-worker
+    worker_path: /Users/alexcai/code/agent-hub/iii/workers/usage-worker
