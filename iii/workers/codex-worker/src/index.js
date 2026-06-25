@@ -3,6 +3,11 @@
 import { registerWorker } from 'iii-sdk';
 import { execCodexTask } from './exec.js';
 import { buildCodexStatus, buildRetentionReport } from './collect.js';
+import {
+  buildCodexMonitor,
+  buildUnsupportedIntervention,
+  buildInterruptDecision,
+} from './control.js';
 
 const ENGINE_URL = process.env.III_ENGINE_URL || process.env.III_URL || 'ws://localhost:49134';
 
@@ -21,6 +26,30 @@ iii.registerFunction('codex::exec', async (data = {}) => {
 
 iii.registerFunction('codex::status', async () => {
   return buildCodexStatus([]);
+});
+
+iii.registerFunction('codex::monitor', async () => {
+  return buildCodexMonitor({ jobs: [] });
+});
+
+iii.registerFunction('codex::intervene', async (data = {}) => {
+  const monitor = data.monitor_snapshot_id
+    ? { monitor_snapshot_id: data.monitor_snapshot_id }
+    : buildCodexMonitor({ jobs: [] });
+  return buildUnsupportedIntervention({
+    job_id: data.job_id ?? '',
+    monitor_snapshot_id: monitor.monitor_snapshot_id,
+    message: data.message ?? '',
+    reason: data.reason ?? '',
+  });
+});
+
+iii.registerFunction('codex::interrupt', async (data = {}) => {
+  return buildInterruptDecision({
+    job_id: data.job_id ?? '',
+    confirm: data.confirm === true,
+    reason: data.reason ?? '',
+  });
 });
 
 iii.registerFunction('codex::retention_report', async () => {

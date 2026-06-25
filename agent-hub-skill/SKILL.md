@@ -154,6 +154,28 @@ GC_FUNCTION=gc::execute ~/code/agent-hub/agent-hub-skill/scripts/gc-report.sh \
   '{"confirm":true,"actions":[{"id":"delete_file:/tmp/cc-old","kind":"delete_file","path_or_pid":"/tmp/cc-old","risk":"low","reason":"stale","requires_confirm":false}]}'
 ```
 
+## cc-worker host bridge（Phase 3b）
+
+Phase 3b 引入 Host Bridge：iii VM 内 `cc-worker` 不直接碰宿主 `tmux`，而是通过 host-side bridge 调 cc-tmux scripts。核心约束：**实时监控是实时干预的前置条件**。
+
+```bash
+# 生产/常规启动：必须设置 token
+export CC_HOST_BRIDGE_TOKEN="$(openssl rand -hex 24)"
+node ~/code/agent-hub/agent-hub-skill/scripts/cc-host-bridge.mjs
+
+# 仅本地 smoke，可显式允许无 token（不要常驻）
+CC_HOST_BRIDGE_ALLOW_NO_TOKEN=1 node ~/code/agent-hub/agent-hub-skill/scripts/cc-host-bridge.mjs
+```
+
+Worker 默认从 VM 访问 `http://100.96.0.1:8767/control`，可用 `CC_HOST_BRIDGE_URL` 覆盖。
+
+安全契约：
+
+- bridge 只接受 `execute / monitor / intervene / interrupt` 白名单动作。
+- `intervene` 必须先 monitor；无监控证据时拒绝或自动先 monitor。
+- `interrupt` 无 `confirm:true` + `reason` 必须拒绝。
+- `kill` 不暴露。
+
 ## codex-worker 查询 / 真实执行
 
 codex-worker 已支持真实 `codex exec`。首次启动或 `iii worker reinstall/clear` 后，VM 内没有 host Codex OAuth，需要临时 provision auth（不写入 git，不打印 token）：

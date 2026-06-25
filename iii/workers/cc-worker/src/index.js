@@ -3,6 +3,7 @@
 import { registerWorker } from 'iii-sdk';
 import { scanSessions, capturePaneFallback } from './scan.js';
 import { buildPoolStatus, buildSessionStatus, discoverSessions, publishFrame } from './publish.js';
+import { callHostBridge } from './bridgeClient.js';
 
 const ENGINE_URL = process.env.III_ENGINE_URL || process.env.III_URL || 'ws://localhost:49134';
 
@@ -48,6 +49,44 @@ iii.registerFunction('cc::publish_status', async () => {
   }
 
   return poolPayload;
+});
+
+// ─── Phase 3b control functions — delegate to host bridge ───
+
+iii.registerFunction('cc::monitor', async (data = {}) => {
+  return callHostBridge({ action: 'monitor', session_id: data.session_id ?? '' });
+});
+
+iii.registerFunction('cc::intervene', async (data = {}) => {
+  return callHostBridge({
+    action: 'intervene',
+    session_id: data.session_id ?? '',
+    message: data.message ?? '',
+    reason: data.reason ?? '',
+    monitor_snapshot_id: data.monitor_snapshot_id ?? null,
+  });
+});
+
+iii.registerFunction('cc::interrupt', async (data = {}) => {
+  return callHostBridge({
+    action: 'interrupt',
+    session_id: data.session_id ?? '',
+    confirm: data.confirm === true,
+    reason: data.reason ?? '',
+  });
+});
+
+iii.registerFunction('cc::execute', async (data = {}) => {
+  return callHostBridge({
+    action: 'execute',
+    target: data.target ?? 'agent-hub',
+    task: data.task ?? '',
+    context_path: data.context_path ?? '',
+    session_id: data.session_id ?? null,
+    topic: data.topic ?? null,
+    mode: data.mode ?? 'discuss-first',
+    timeout_ms: data.timeout_ms,
+  });
 });
 
 // keepalive
