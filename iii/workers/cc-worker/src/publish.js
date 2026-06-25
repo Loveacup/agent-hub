@@ -31,6 +31,14 @@ export function buildNatsPublishFrame(subject, payload) {
   return `PUB ${subject} ${len}\r\n${body}\r\n`;
 }
 
+export function resolveNatsTarget(env = process.env) {
+  return {
+    host: env.NATS_HOST || '100.96.0.1',
+    port: Number(env.NATS_PORT || 4222),
+    timeout_ms: Number(env.NATS_TIMEOUT_MS || 1500),
+  };
+}
+
 /**
  * Publish a frame to NATS via raw TCP. Fire-and-forget.
  *
@@ -39,7 +47,8 @@ export function buildNatsPublishFrame(subject, payload) {
  * @param {{ host?: string, port?: number }} [opts]
  * @returns {Promise<void>}
  */
-export async function publishFrame(subject, payload, { host = '127.0.0.1', port = 4222 } = {}) {
+export async function publishFrame(subject, payload, opts = {}) {
+  const { host, port, timeout_ms } = { ...resolveNatsTarget(), ...opts };
   const frame = buildNatsPublishFrame(subject, payload);
   return new Promise((resolve, reject) => {
     const sock = createConnection({ host, port }, () => {
@@ -49,7 +58,12 @@ export async function publishFrame(subject, payload, { host = '127.0.0.1', port 
         resolve();
       });
     });
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error('nats_publish_timeout'));
+    }, timeout_ms);
     sock.on('error', reject);
+    sock.on('close', () => clearTimeout(timer));
   });
 }
 

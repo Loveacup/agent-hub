@@ -4,6 +4,7 @@ import { registerWorker } from 'iii-sdk';
 import { scanSessions, capturePaneFallback } from './scan.js';
 import { buildPoolStatus, buildSessionStatus, discoverSessions, publishFrame } from './publish.js';
 import { callHostBridge, checkHostBridge } from './bridgeClient.js';
+import { callAndPublishControl } from './controlEvents.js';
 
 const ENGINE_URL = process.env.III_ENGINE_URL || process.env.III_URL || 'ws://localhost:49134';
 
@@ -54,34 +55,34 @@ iii.registerFunction('cc::publish_status', async () => {
 // ─── Phase 3b control functions — delegate to host bridge ───
 
 iii.registerFunction('cc::bridge_status', async () => {
-  return checkHostBridge();
+  return callAndPublishControl('bridge_status', () => checkHostBridge());
 });
 
 iii.registerFunction('cc::monitor', async (data = {}) => {
-  return callHostBridge({ action: 'monitor', session_id: data.session_id ?? '' });
+  return callAndPublishControl('monitor', () => callHostBridge({ action: 'monitor', session_id: data.session_id ?? '' }));
 });
 
 iii.registerFunction('cc::intervene', async (data = {}) => {
-  return callHostBridge({
+  return callAndPublishControl('intervene', () => callHostBridge({
     action: 'intervene',
     session_id: data.session_id ?? '',
     message: data.message ?? '',
     reason: data.reason ?? '',
     monitor_snapshot_id: data.monitor_snapshot_id ?? null,
-  });
+  }));
 });
 
 iii.registerFunction('cc::interrupt', async (data = {}) => {
-  return callHostBridge({
+  return callAndPublishControl('interrupt', () => callHostBridge({
     action: 'interrupt',
     session_id: data.session_id ?? '',
     confirm: data.confirm === true,
     reason: data.reason ?? '',
-  });
+  }));
 });
 
 iii.registerFunction('cc::execute', async (data = {}) => {
-  return callHostBridge({
+  return callAndPublishControl('execute', () => callHostBridge({
     action: 'execute',
     target: data.target ?? 'agent-hub',
     task: data.task ?? '',
@@ -93,7 +94,7 @@ iii.registerFunction('cc::execute', async (data = {}) => {
     effort: data.effort ?? 'high',
     model: data.model ?? 'claude-opus-4-8',
     ack_active: data.ack_active === true,
-  });
+  }));
 });
 
 // keepalive

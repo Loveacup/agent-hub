@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 const {
   sanitizeSubjectToken,
   buildNatsPublishFrame,
+  resolveNatsTarget,
   buildPoolStatus,
   buildSessionStatus,
   discoverSessions,
@@ -12,7 +13,7 @@ const {
   try {
     return await import('../src/publish.js');
   } catch {
-    return { sanitizeSubjectToken: null, buildNatsPublishFrame: null, buildPoolStatus: null, buildSessionStatus: null, discoverSessions: null };
+    return { sanitizeSubjectToken: null, buildNatsPublishFrame: null, resolveNatsTarget: null, buildPoolStatus: null, buildSessionStatus: null, discoverSessions: null };
   }
 })();
 
@@ -50,6 +51,19 @@ test('buildNatsPublishFrame includes correct byte length', () => {
   const frame = buildNatsPublishFrame('agent.cc.pool.status', payload);
   const lines = frame.split('\r\n');
   assert.equal(lines[0], 'PUB agent.cc.pool.status ' + Buffer.byteLength(JSON.stringify(payload)));
+});
+
+test('resolveNatsTarget defaults to VM-to-host gateway with timeout', () => {
+  assert.ok(resolveNatsTarget, 'resolveNatsTarget must be implemented');
+  assert.deepEqual(resolveNatsTarget({}), { host: '100.96.0.1', port: 4222, timeout_ms: 1500 });
+});
+
+test('resolveNatsTarget lets explicit env override host, port, and timeout', () => {
+  assert.deepEqual(resolveNatsTarget({
+    NATS_HOST: 'nats.local',
+    NATS_PORT: '4333',
+    NATS_TIMEOUT_MS: '250',
+  }), { host: 'nats.local', port: 4333, timeout_ms: 250 });
 });
 
 // ═══════ buildPoolStatus ═══════

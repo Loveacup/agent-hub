@@ -183,6 +183,8 @@ Worker 默认从 VM 访问 `http://100.96.0.1:8767/control`，可用 `CC_HOST_BR
 iii trigger cc::bridge_status --json '{}'
 ```
 
+`cc::bridge_status / monitor / intervene / execute / interrupt` 返回后会 best-effort 发布 NATS 控制事件：`agent.cc.control.<action>`。NATS 默认走 VM→host gateway `100.96.0.1:4222`，可用 `NATS_HOST/NATS_PORT/NATS_TIMEOUT_MS` 覆盖；publish 失败不会阻塞控制调用，返回里会带 `event_published:false`。
+
 `cc::intervene` 会把干预内容写到持久 `/tmp/agent-hub-cc-intervention-<session>-<ts>.md`，避免 CC 延迟读取时 context 被提前删除。
 
 安全契约：
