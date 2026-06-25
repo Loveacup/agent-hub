@@ -185,6 +185,18 @@ iii trigger cc::bridge_status --json '{}'
 
 `cc::bridge_status / monitor / intervene / execute / interrupt` 返回后会 best-effort 发布 NATS 控制事件：`agent.cc.control.<action>`。NATS 默认走 VM→host gateway `100.96.0.1:4222`，可用 `NATS_HOST/NATS_PORT/NATS_TIMEOUT_MS` 覆盖；publish 失败不会阻塞控制调用，返回里会带 `event_published:false`。
 
+Hermes 需要持续盯一个 CC session 时，用 bounded watcher，不要手动循环 trigger：
+
+```bash
+~/code/agent-hub/agent-hub-skill/scripts/cc-watch-session.mjs \
+  --session hermes-cc-default-agent-hub-0625-1600 \
+  --interval-ms 15000 \
+  --max-ticks 120 \
+  --output /tmp/agent-hub-cc-watch.jsonl
+```
+
+它只在首帧、状态变化、终态输出 JSONL；终态 `COMPLETED/BLOCKED/FREEZE/error` 自动退出。`max-ticks` 用尽会输出 `status: timeout` 并 exit 2，避免 watcher 永久挂死。
+
 `cc::intervene` 会把干预内容写到持久 `/tmp/agent-hub-cc-intervention-<session>-<ts>.md`，避免 CC 延迟读取时 context 被提前删除。
 
 安全契约：
