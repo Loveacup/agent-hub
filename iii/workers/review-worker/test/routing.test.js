@@ -85,3 +85,55 @@ test('decideRoute honors available_workers overrides', () => {
   assert.equal(res.requires_review, false);
   assert.match(res.reason, /codex.*offline|fallback/i);
 });
+
+test('decideRoute marks high-risk code execution as requiring review', () => {
+  const res = decideRoute({
+    task: 'modify authentication code and run tests',
+    constraints: { requires_code_execution: true, risk: 'high' },
+  });
+  assert.equal(res.lane, 'codex');
+  assert.equal(res.requires_review, true);
+  assert.equal(res.execute, false);
+  assert.equal(res.decision_code, 'CODEX_CODE_EXECUTION');
+});
+
+test('decideRoute routes realtime tasks to review when cc is unavailable', () => {
+  const res = decideRoute({
+    task: 'monitor a Claude Code session and intervene if needed',
+    constraints: { requires_realtime: true, risk: 'high' },
+    available_workers: {
+      cc: { available: false, reason: 'cc offline' },
+      review: { available: true },
+    },
+  });
+  assert.equal(res.lane, 'review');
+  assert.equal(res.requires_review, true);
+  assert.equal(res.execute, false);
+  assert.equal(res.decision_code, 'CC_UNAVAILABLE_REVIEW_REQUIRED');
+  assert.match(res.reason, /cc offline|unavailable/i);
+});
+
+test('decideRoute falls back to review when code execution workers are unavailable', () => {
+  const res = decideRoute({
+    task: 'run tests in the repo',
+    constraints: { requires_code_execution: true, risk: 'normal' },
+    available_workers: {
+      codex: { available: false, reason: 'codex offline' },
+      cc: { available: false, reason: 'cc offline' },
+      review: { available: true },
+    },
+  });
+  assert.equal(res.lane, 'review');
+  assert.equal(res.requires_review, true);
+  assert.equal(res.execute, false);
+  assert.equal(res.decision_code, 'NO_EXECUTION_LANE_AVAILABLE');
+});
+
+test('decideRoute unknown tasks default to review with audit-friendly decision_code', () => {
+  const res = decideRoute({ task: 'please handle this vague thing' });
+  assert.equal(res.lane, 'review');
+  assert.equal(res.requires_review, false);
+  assert.equal(res.execute, false);
+  assert.equal(res.decision_code, 'DEFAULT_REVIEW');
+  assert.match(res.reason, /default safe route/i);
+});
