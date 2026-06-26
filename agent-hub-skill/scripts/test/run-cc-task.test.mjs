@@ -293,6 +293,35 @@ test('run-cc-task records final.json when iii returns invalid JSON', async () =>
   }
 });
 
+test('run-cc-task passes ack_active:true to cc::execute when --ack-active is set', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-ack-active-'));
+  const contextPath = join(base, 'context.md');
+  await writeFile(contextPath, 'hello context\n', 'utf8');
+  const fake = await writeFakeIii(base, 'ok');
+  const watcher = await writeFakeWatcher(base);
+  try {
+    const res = await runScript([
+      '--target', 'agent-hub',
+      '--task', 'test task',
+      '--context', contextPath,
+      '--base-dir', join(base, 'runs'),
+      '--iii-bin', fake.scriptPath,
+      '--watcher-bin', watcher.scriptPath,
+      '--ack-active',
+    ]);
+    assert.equal(res.code, 0, res.stderr);
+    const payload = JSON.parse(res.stdout);
+    assert.equal(payload.status, 'watching');
+    const calls = (await readFile(fake.callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    const executeCall = calls.find((c) => c.args[1] === 'cc::execute');
+    assert.ok(executeCall, 'must have called cc::execute');
+    const sentPayload = JSON.parse(executeCall.args[executeCall.args.indexOf('--json') + 1]);
+    assert.equal(sentPayload.ack_active, true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test('run-cc-task spawns watcher after execute success and records watcher metadata', async () => {
   const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-watcher-'));
   const contextPath = join(base, 'context.md');

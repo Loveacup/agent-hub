@@ -18,11 +18,11 @@ import { DEFAULT_III_BIN, triggerIii } from './lib/iii-client.mjs';
 const DEFAULT_WATCHER_BIN = new URL('./cc-watch-session.mjs', import.meta.url).pathname;
 
 function usage() {
-  return `Usage: run-cc-task.mjs --target <name> --task <text> --context <absolute-path> [options]\n\nOptions:\n  --topic <topic-id>\n  --effort <high|medium|low>       default: high\n  --base-dir <dir>                 default: ${DEFAULT_RUN_BASE_DIR}\n  --iii-bin <path>                 default: ${DEFAULT_III_BIN}\n  --iii-address <host>             default: localhost\n  --iii-port <port>                default: 49134\n  --timeout-ms <ms>                default: 60000\n  --watcher-bin <path>             default: ${DEFAULT_WATCHER_BIN}\n  --watch-interval-ms <ms>         default: 15000\n  --watch-max-ticks <n>            default: 120\n  --watch-stale-after-ticks <n>    default: 8\n  --bridge-check-only              check bridge_status only; do not execute or spawn watcher\n  --init-only                      create manifest only; do not call iii/CC\n  --help, -h\n`;
+  return `Usage: run-cc-task.mjs --target <name> --task <text> --context <absolute-path> [options]\n\nOptions:\n  --topic <topic-id>\n  --effort <high|medium|low>       default: high\n  --base-dir <dir>                 default: ${DEFAULT_RUN_BASE_DIR}\n  --iii-bin <path>                 default: ${DEFAULT_III_BIN}\n  --iii-address <host>             default: localhost\n  --iii-port <port>                default: 49134\n  --timeout-ms <ms>                default: 60000\n  --watcher-bin <path>             default: ${DEFAULT_WATCHER_BIN}\n  --watch-interval-ms <ms>         default: 15000\n  --watch-max-ticks <n>            default: 120\n  --watch-stale-after-ticks <n>    default: 8\n  --bridge-check-only              check bridge_status only; do not execute or spawn watcher\n  --init-only                      create manifest only; do not call iii/CC\n  --help, -h\n  --ack-active                     pass ack_active=true to cc::execute (acknowledge active sessions)\n`;
 }
 
 function parseArgs(argv) {
-  const args = { effort: 'high', base_dir: DEFAULT_RUN_BASE_DIR, init_only: false, bridge_check_only: false, iii_bin: DEFAULT_III_BIN, iii_address: 'localhost', iii_port: 49134, timeout_ms: 60_000, watcher_bin: DEFAULT_WATCHER_BIN, watch_interval_ms: 15_000, watch_max_ticks: 120, watch_stale_after_ticks: 8 };
+  const args = { effort: 'high', base_dir: DEFAULT_RUN_BASE_DIR, init_only: false, bridge_check_only: false, ack_active: false, iii_bin: DEFAULT_III_BIN, iii_address: 'localhost', iii_port: 49134, timeout_ms: 60_000, watcher_bin: DEFAULT_WATCHER_BIN, watch_interval_ms: 15_000, watch_max_ticks: 120, watch_stale_after_ticks: 8 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--target') args.target = argv[++i];
@@ -41,6 +41,7 @@ function parseArgs(argv) {
     else if (a === '--watch-stale-after-ticks') args.watch_stale_after_ticks = Number(argv[++i]);
     else if (a === '--bridge-check-only') args.bridge_check_only = true;
     else if (a === '--init-only') args.init_only = true;
+    else if (a === '--ack-active') args.ack_active = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else throw new Error(`unknown arg: ${a}`);
   }
@@ -187,6 +188,7 @@ async function main() {
         context_path: args.context_path,
         topic: args.topic || '',
         effort: args.effort,
+        ack_active: args.ack_active,
       },
       address: args.iii_address,
       port: args.iii_port,
