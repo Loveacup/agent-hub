@@ -192,7 +192,7 @@ async function main() {
       port: args.iii_port,
       timeout_ms: args.timeout_ms,
     });
-    if (execute?.lifecycle_state === 'active_sessions_require_ack') {
+    if (execute?.lifecycle_state === 'active_sessions_require_ack' || execute?.error === 'active_sessions_require_ack') {
       const error = 'active_sessions_require_ack';
       manifest = updateManifestStatus(manifest, { status: 'blocked', extra: { error, execute } });
       await writeManifest(manifest);
