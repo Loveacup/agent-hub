@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Phase 7 omp-worker — OMP profile lifecycle manager (Slice 1: registry + validator only)",
+  "description": "Phase 7 omp-worker — OMP profile lifecycle manager (Slice 1-7: registry + discover + render + apply + validate + audit helpers + fail-closed runtime entry; no OMP runtime lane registered, all execute=false)",
   "scripts": {
     "dev": "node src/index.js",
     "start": "node src/index.js",
