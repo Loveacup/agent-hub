@@ -9,9 +9,13 @@ export function defaultWorkerCatalog() {
       reason: 'cc-worker supports realtime session control',
     },
     codex: {
+      // codex-worker is CLI-backed but the agent-hub control plane can still
+      // monitor/interrupt/cancel/status its runs, so it is treated as
+      // monitorable + intervenable. This advertises control-plane capability
+      // only; it does NOT add any new runtime execution behavior.
       available: true,
-      capabilities: ['code', 'exec', 'stateless'],
-      reason: 'codex-worker supports bounded code execution',
+      capabilities: ['code', 'exec', 'stateless', 'monitor', 'intervene'],
+      reason: 'codex-worker supports bounded code execution under control-plane monitor/intervene',
     },
     review: {
       available: true,
@@ -44,7 +48,47 @@ function mergedCatalog(available_workers = {}) {
   return base;
 }
 
-function decision({ lane, reason, decision_code, requires_review = false, constraints, catalog, run_id = null }) {
+// ── Uniform control-plane contract ──────────────────────────────────────────
+// Every route decision carries a `control_plane` object so NO agent — including
+// CLI-backed lanes — is ever treated as fire-and-forget. monitoring_required /
+// intervention_required are policy invariants (always true); monitorable /
+// intervenable / runtime_available describe what the named lane can actually do
+// right now. This is metadata only — it never enables a runtime.
+function controlPlaneForLane(lane, catalog) {
+  const entry = catalog?.[lane] ?? {};
+  const caps = entry.capabilities ?? [];
+  const available = entry.available === true;
+  const hasMonitor = caps.includes('monitor');
+  const hasIntervene = caps.includes('intervene');
+  const base = { monitoring_required: true, intervention_required: true };
+
+  switch (lane) {
+    case 'cc':
+    case 'codex': {
+      const monitorable = available && hasMonitor;
+      const intervenable = available && hasIntervene;
+      return {
+        ...base,
+        monitorable,
+        intervenable,
+        runtime_available: available,
+        status: monitorable && intervenable ? 'available' : 'unavailable',
+      };
+    }
+    case 'review':
+      // The review/gate lane is always observable but can only gate/deny — it
+      // cannot steer a running agent, so intervention is review-only.
+      return { ...base, monitorable: true, intervenable: false, runtime_available: available, status: 'review_only' };
+    case 'omp':
+      // OMP runtime stays unregistered: monitorable as control-plane metadata
+      // only, never intervenable until a runtime exists.
+      return { ...base, monitorable: true, intervenable: available, runtime_available: available, status: available ? 'available' : 'unavailable' };
+    default:
+      return { ...base, monitorable: false, intervenable: false, runtime_available: available, status: 'unsupported' };
+  }
+}
+
+function decision({ lane, reason, decision_code, requires_review = false, constraints, catalog, run_id = null, control_lane = null }) {
   return {
     kind: 'route.decision',
     lane,
@@ -55,11 +99,98 @@ function decision({ lane, reason, decision_code, requires_review = false, constr
     run_id,
     constraints,
     available_workers: catalog,
+    // control_lane lets OMP decisions (routed to the review lane) report the OMP
+    // runtime's control-plane status rather than the review fallback's.
+    control_plane: controlPlaneForLane(control_lane ?? lane, catalog),
   };
 }
 
 function risky(risk) {
   return risk === 'high' || risk === 'danger';
+}
+
+// ── OMP lifecycle recognition (Phase 7 Slice 6) ──────────────────────────────
+// The review-worker recognizes OMP profile lifecycle intents but NEVER enables
+// an OMP runtime lane: every OMP route stays execute=false and falls back to the
+// review/control plane. Unsafe asks are explicitly denied rather than ignored.
+// Each OMP decision also carries the mandatory monitorability/intervention
+// contract so the work is never treated as fire-and-forget or untracked.
+const OMP_LIFECYCLE_VERB_RE = /\b(discover|render|validate|audit|apply-plan)\b/;
+
+function isOmpContext(taskText, raw) {
+  return (
+    /\bomp\b/.test(taskText) ||
+    raw.task_kind === 'omp_profile_lifecycle' ||
+    raw.capability === 'omp.profile.lifecycle' ||
+    raw.preferred_lane === 'omp'
+  );
+}
+
+// Attach the control-plane contract to an OMP decision. `intervention_supported`
+// is explicitly false while the OMP runtime lane is unavailable — never omitted
+// in a way that could read as untracked execution.
+function withControlPlane(decision, runtimeAvailable) {
+  return {
+    ...decision,
+    monitoring_required: true,
+    intervention_supported: runtimeAvailable === true,
+    runtime_available: runtimeAvailable === true,
+  };
+}
+
+function detectOmpUnsafe(taskText) {
+  if (/cross[\s-]?profile|across .*profiles?|other profiles?|另一?个?.*profile/.test(taskText)) {
+    return { decision_code: 'omp_cross_profile_execution_denied', reason: 'cross-profile OMP execution is denied; route to review (execute=false)' };
+  }
+  if (/\b(enable|register|activate|turn on|启用|注册)\b/.test(taskText) && /gateway|runtime|lane|worker|omp/.test(taskText)) {
+    return { decision_code: 'omp_runtime_disabled', reason: 'enabling/registering an OMP runtime lane or gateway is denied; OMP runtime stays disabled (execute=false)' };
+  }
+  if (/\.env|secret|credential|token|密钥|\bsession|\btranscript|\bmemor(y|ies)|\blogs?\b|读取/.test(taskText)) {
+    return { decision_code: 'omp_secret_access_denied', reason: 'reading OMP secrets/sessions/logs/memory is denied; route to review (execute=false)' };
+  }
+  return null;
+}
+
+function isOmpLifecycleIntent(taskText, raw) {
+  return (
+    raw.task_kind === 'omp_profile_lifecycle' ||
+    raw.capability === 'omp.profile.lifecycle' ||
+    OMP_LIFECYCLE_VERB_RE.test(taskText)
+  );
+}
+
+function decideOmpRoute({ taskText, rawConstraints, constraints, catalog }) {
+  if (!isOmpContext(taskText, rawConstraints)) return null;
+  const runtimeAvailable = catalog.omp?.available === true;
+
+  const unsafe = detectOmpUnsafe(taskText);
+  if (unsafe) {
+    return withControlPlane(decision({
+      lane: 'review',
+      decision_code: unsafe.decision_code,
+      reason: unsafe.reason,
+      requires_review: true,
+      constraints,
+      catalog,
+      control_lane: 'omp',
+    }), runtimeAvailable);
+  }
+
+  if (isOmpLifecycleIntent(taskText, rawConstraints)) {
+    return withControlPlane(decision({
+      lane: 'review',
+      decision_code: runtimeAvailable ? 'omp_lifecycle_review_required' : 'omp_runtime_unavailable',
+      reason: runtimeAvailable
+        ? 'OMP profile lifecycle intent recognized; route to review gate before any OMP action (execute=false, monitored)'
+        : `OMP profile lifecycle intent recognized but OMP runtime lane is unavailable (${catalog.omp?.reason ?? 'omp lane disabled'}); route to review (execute=false, monitored, not intervenable)`,
+      requires_review: true,
+      constraints,
+      catalog,
+      control_lane: 'omp',
+    }), runtimeAvailable);
+  }
+
+  return null;
 }
 
 function routeEventPayload(decision) {
@@ -94,15 +225,25 @@ export function decideRoute({ task = '', constraints: rawConstraints = {}, avail
   const catalog = mergedCatalog(available_workers);
   const taskText = String(task).toLowerCase();
 
+  // Phase 7 Slice 6: recognize OMP lifecycle intents (and deny unsafe OMP asks)
+  // before the generic routing branches — always execute=false, review fallback,
+  // monitorability contract attached. Benign `preferred_lane: 'omp'` requests
+  // without a lifecycle verb fall through to the not-implemented branch below.
+  const ompDecision = decideOmpRoute({ taskText, rawConstraints, constraints, catalog });
+  if (ompDecision) {
+    return maybePublish(ompDecision, { publish_route_event, publishDecision, run_id });
+  }
+
   if (constraints.preferred_lane === 'omp') {
-    return maybePublish(decision({
+    return maybePublish(withControlPlane(decision({
       lane: 'review',
       decision_code: 'OMP_NOT_IMPLEMENTED_REVIEW_REQUIRED',
       reason: `omp requested but OMP lane is not implemented yet; route to review gate first (${catalog.omp?.reason ?? 'omp unavailable'})`,
       requires_review: true,
       constraints,
       catalog,
-    }), { publish_route_event, publishDecision, run_id });
+      control_lane: 'omp',
+    }), catalog.omp?.available === true), { publish_route_event, publishDecision, run_id });
   }
 
   if (constraints.requires_review || /review|verify|danger|scan|gate|危险|审核|验收/.test(taskText)) {
