@@ -18,11 +18,11 @@ import { DEFAULT_III_BIN, triggerIii } from './lib/iii-client.mjs';
 const DEFAULT_WATCHER_BIN = new URL('./cc-watch-session.mjs', import.meta.url).pathname;
 
 function usage() {
-  return `Usage: run-cc-task.mjs --target <name> --task <text> --context <absolute-path> [options]\n\nOptions:\n  --topic <topic-id>\n  --effort <high|medium|low>       default: high\n  --base-dir <dir>                 default: ${DEFAULT_RUN_BASE_DIR}\n  --iii-bin <path>                 default: ${DEFAULT_III_BIN}\n  --iii-address <host>             default: localhost\n  --iii-port <port>                default: 49134\n  --timeout-ms <ms>                default: 60000\n  --watcher-bin <path>             default: ${DEFAULT_WATCHER_BIN}\n  --watch-interval-ms <ms>         default: 15000\n  --watch-max-ticks <n>            default: 120\n  --watch-stale-after-ticks <n>    default: 0\n  --bridge-check-only              check bridge_status only; do not execute or spawn watcher\n  --init-only                      create manifest only; do not call iii/CC\n  --help, -h\n`;
+  return `Usage: run-cc-task.mjs --target <name> --task <text> --context <absolute-path> [options]\n\nOptions:\n  --topic <topic-id>\n  --effort <high|medium|low>       default: high\n  --base-dir <dir>                 default: ${DEFAULT_RUN_BASE_DIR}\n  --iii-bin <path>                 default: ${DEFAULT_III_BIN}\n  --iii-address <host>             default: localhost\n  --iii-port <port>                default: 49134\n  --timeout-ms <ms>                default: 60000\n  --watcher-bin <path>             default: ${DEFAULT_WATCHER_BIN}\n  --watch-interval-ms <ms>         default: 15000\n  --watch-max-ticks <n>            default: 120\n  --watch-stale-after-ticks <n>    default: 8\n  --bridge-check-only              check bridge_status only; do not execute or spawn watcher\n  --init-only                      create manifest only; do not call iii/CC\n  --help, -h\n`;
 }
 
 function parseArgs(argv) {
-  const args = { effort: 'high', base_dir: DEFAULT_RUN_BASE_DIR, init_only: false, bridge_check_only: false, iii_bin: DEFAULT_III_BIN, iii_address: 'localhost', iii_port: 49134, timeout_ms: 60_000, watcher_bin: DEFAULT_WATCHER_BIN, watch_interval_ms: 15_000, watch_max_ticks: 120, watch_stale_after_ticks: 0 };
+  const args = { effort: 'high', base_dir: DEFAULT_RUN_BASE_DIR, init_only: false, bridge_check_only: false, iii_bin: DEFAULT_III_BIN, iii_address: 'localhost', iii_port: 49134, timeout_ms: 60_000, watcher_bin: DEFAULT_WATCHER_BIN, watch_interval_ms: 15_000, watch_max_ticks: 120, watch_stale_after_ticks: 8 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--target') args.target = argv[++i];
@@ -192,6 +192,14 @@ async function main() {
       port: args.iii_port,
       timeout_ms: args.timeout_ms,
     });
+    if (execute?.lifecycle_state === 'active_sessions_require_ack') {
+      const error = 'active_sessions_require_ack';
+      manifest = updateManifestStatus(manifest, { status: 'blocked', extra: { error, execute } });
+      await writeManifest(manifest);
+      await writeFinal(paths, { kind: 'agent_hub.cc_run_final', status: 'blocked', run_id, error, execute });
+      process.stdout.write(`${JSON.stringify(outputPayload({ manifest, paths, extra: { error } }))}\n`);
+      process.exit(3);
+    }
     if (execute?.lifecycle_state !== 'sent_not_completed') {
       const error = `execute did not return sent_not_completed: ${execute?.lifecycle_state || execute?.status || 'unknown'}`;
       manifest = updateManifestStatus(manifest, { status: 'failed', extra: { error, execute } });

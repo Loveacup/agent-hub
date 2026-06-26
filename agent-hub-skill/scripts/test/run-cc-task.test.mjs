@@ -28,7 +28,7 @@ function runScript(args, opts = {}) {
 async function writeFakeIii(dir, mode) {
   const callsPath = join(dir, 'iii-calls.jsonl');
   const scriptPath = join(dir, 'fake-iii.mjs');
-  const content = `#!/usr/bin/env node\nimport { appendFileSync } from 'node:fs';\nconst callsPath = ${JSON.stringify(callsPath)};\nconst args = process.argv.slice(2);\nappendFileSync(callsPath, JSON.stringify({ args }) + '\\n');\nconst action = args[1] || '';\nif (${JSON.stringify(mode)} === 'invalid-json') {\n  console.log('not json');\n  process.exit(0);\n}\nif (action === 'cc::bridge_status') {\n  if (${JSON.stringify(mode)} === 'bridge-fail') {\n    console.log(JSON.stringify({ kind: 'cc.bridge_status', status: 'error', error: 'bridge down' }));\n    process.exit(0);\n  }\n  console.log(JSON.stringify({ kind: 'cc.bridge_status', status: 'ok', bridge: { status: 'ok' } }));\n  process.exit(0);\n}\nif (action === 'cc::execute') {\n  console.log(JSON.stringify({ kind: 'cc.execute', status: 'sent', lifecycle_state: 'sent_not_completed', session_id: 'hermes-cc-default-agent-hub-test' }));\n  process.exit(0);\n}\nconsole.log(JSON.stringify({ status: 'error', error: 'unknown action', action }));\nprocess.exit(0);\n`;
+  const content = `#!/usr/bin/env node\nimport { appendFileSync } from 'node:fs';\nconst callsPath = ${JSON.stringify(callsPath)};\nconst args = process.argv.slice(2);\nappendFileSync(callsPath, JSON.stringify({ args }) + '\\n');\nconst action = args[1] || '';\nif (${JSON.stringify(mode)} === 'invalid-json') {\n  console.log('not json');\n  process.exit(0);\n}\nif (action === 'cc::bridge_status') {\n  if (${JSON.stringify(mode)} === 'bridge-fail') {\n    console.log(JSON.stringify({ kind: 'cc.bridge_status', status: 'error', error: 'bridge down' }));\n    process.exit(0);\n  }\n  console.log(JSON.stringify({ kind: 'cc.bridge_status', status: 'ok', bridge: { status: 'ok' } }));\n  process.exit(0);\n}\nif (action === 'cc::execute') {\n  if (${JSON.stringify(mode)} === 'active-sessions') {\n    console.log(JSON.stringify({ kind: 'cc.execute', status: 'blocked', lifecycle_state: 'active_sessions_require_ack', sessions: ['hermes-cc-existing'] }));\n    process.exit(0);\n  }\n  console.log(JSON.stringify({ kind: 'cc.execute', status: 'sent', lifecycle_state: 'sent_not_completed', session_id: 'hermes-cc-default-agent-hub-test' }));\n  process.exit(0);\n}\nconsole.log(JSON.stringify({ status: 'error', error: 'unknown action', action }));\nprocess.exit(0);\n`;
   await writeFile(scriptPath, content, 'utf8');
   await chmod(scriptPath, 0o755);
   return { scriptPath, callsPath };
@@ -206,6 +206,37 @@ test('run-cc-task executes after bridge ok and marks manifest watching', async (
   }
 });
 
+test('run-cc-task maps active session ack gate to blocked instead of failed', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-active-sessions-'));
+  const contextPath = join(base, 'context.md');
+  await writeFile(contextPath, 'hello context\n', 'utf8');
+  const fake = await writeFakeIii(base, 'active-sessions');
+  const watcher = await writeFakeWatcher(base);
+  try {
+    const res = await runScript([
+      '--target', 'agent-hub',
+      '--task', 'test task',
+      '--context', contextPath,
+      '--base-dir', join(base, 'runs'),
+      '--iii-bin', fake.scriptPath,
+      '--watcher-bin', watcher.scriptPath,
+    ]);
+    assert.equal(res.code, 3, res.stderr);
+    const payload = JSON.parse(res.stdout);
+    assert.equal(payload.status, 'blocked');
+    assert.match(payload.error, /active_sessions_require_ack/);
+    const manifest = JSON.parse(await readFile(payload.manifest_path, 'utf8'));
+    assert.equal(manifest.status, 'blocked');
+    assert.deepEqual(manifest.history.map((h) => h.status), ['starting', 'bridge_checking', 'executing', 'blocked']);
+    const final = JSON.parse(await readFile(payload.final_path, 'utf8'));
+    assert.equal(final.status, 'blocked');
+    assert.equal(final.execute.lifecycle_state, 'active_sessions_require_ack');
+    await assert.rejects(readFile(watcher.callsPath, 'utf8'), /ENOENT/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test('run-cc-task records final.json when iii returns invalid JSON', async () => {
   const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-invalid-json-'));
   const contextPath = join(base, 'context.md');
@@ -261,6 +292,7 @@ test('run-cc-task spawns watcher after execute success and records watcher metad
       '--interval-ms', '10',
       '--max-ticks', '1',
       '--output', payload.watch_path,
+      '--stale-after-ticks', '8',
     ]);
     const manifest = JSON.parse(await readFile(payload.manifest_path, 'utf8'));
     assert.equal(manifest.status, 'watching');
