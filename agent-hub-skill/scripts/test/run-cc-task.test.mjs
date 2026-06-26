@@ -142,6 +142,40 @@ test('run-cc-task stops after bridge_status failure and writes final.json', asyn
   }
 });
 
+test('run-cc-task bridge-check-only stops after bridge_status ok without execute or watcher', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-bridge-check-'));
+  const contextPath = join(base, 'context.md');
+  await writeFile(contextPath, 'hello context\n', 'utf8');
+  const fake = await writeFakeIii(base, 'ok');
+  const watcher = await writeFakeWatcher(base);
+  try {
+    const res = await runScript([
+      '--target', 'agent-hub',
+      '--task', 'test task',
+      '--context', contextPath,
+      '--base-dir', join(base, 'runs'),
+      '--iii-bin', fake.scriptPath,
+      '--watcher-bin', watcher.scriptPath,
+      '--bridge-check-only',
+    ]);
+    assert.equal(res.code, 0, res.stderr);
+    const payload = JSON.parse(res.stdout);
+    assert.equal(payload.status, 'bridge_ok');
+    assert.equal(payload.bridge_check_only, true);
+    const manifest = JSON.parse(await readFile(payload.manifest_path, 'utf8'));
+    assert.equal(manifest.status, 'bridge_ok');
+    assert.deepEqual(manifest.history.map((h) => h.status), ['starting', 'bridge_checking', 'bridge_ok']);
+    const final = JSON.parse(await readFile(payload.final_path, 'utf8'));
+    assert.equal(final.status, 'bridge_ok');
+    assert.equal(final.bridge_check_only, true);
+    const calls = (await readFile(fake.callsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(calls.map((c) => c.args[1]), ['cc::bridge_status']);
+    await assert.rejects(readFile(watcher.callsPath, 'utf8'), /ENOENT/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
 test('run-cc-task executes after bridge ok and marks manifest watching', async () => {
   const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-execute-'));
   const contextPath = join(base, 'context.md');
