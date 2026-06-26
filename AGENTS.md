@@ -51,7 +51,7 @@ agent-hub/
 | 3 | cc-worker · wrap cc-tmux（不 fork） | ✅ |
 | 3b | cc-worker 实时控制 MVP（execute/monitor/intervene/watcher） | ✅ |
 | 4 | codex-worker · Codex `codex exec` lane | ✅ |
-| 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive）★ Alex 核心诉求 | ✅ MVP slices 1-6 |
+| 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive）★ Alex 核心诉求 | ✅ MVP slices 1-6 + fake E2E smoke |
 | 6 | omp-worker + review-worker + 多 CLI routing | ⬜ |
 | 7 | ssh-worker PoC · 自有远程执行（不依赖 askills） | ⬜ |
 | 8 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
