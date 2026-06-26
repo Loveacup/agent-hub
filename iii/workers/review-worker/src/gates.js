@@ -1,7 +1,12 @@
 // Phase 6 review-worker — thin wrappers around substrate-independent gate scripts.
 import { execFile } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-export const DEFAULT_GATE_DIR = '/Users/alexcai/.hermes/skills/autonomous-ai-agents/cc-tmux/scripts/gate';
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REVIEW_WORKER_DIR = join(__dirname, '..');
+
+export const DEFAULT_GATE_DIR = process.env.REVIEW_GATE_DIR || join(REVIEW_WORKER_DIR, 'scripts', 'gate');
 export const DEFAULT_DANGER_GATE = `${DEFAULT_GATE_DIR}/gate-danger.sh`;
 export const DEFAULT_VERIFY_GATE = `${DEFAULT_GATE_DIR}/gate-verify.sh`;
 export const DEFAULT_COUNTER_GATE = `${DEFAULT_GATE_DIR}/gate-counter.sh`;

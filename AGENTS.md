@@ -53,7 +53,7 @@ agent-hub/
 | 3b | cc-worker 实时控制 MVP（execute/monitor/intervene/watcher） | ✅ |
 | 4 | codex-worker · Codex `codex exec` lane | ✅ |
 | 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive）★ Alex 核心诉求 | ✅ MVP slices 1-6 + fake E2E smoke |
-| 6 | review-worker gate-runner + 后续 omp-worker / 多 CLI routing | 🟡 Slice 1 |
+| 6 | review-worker gate-runner + 后续 omp-worker / 多 CLI routing | ✅ Slice 1-2 |
 | 7 | ssh-worker PoC · 自有远程执行（不依赖 askills） | ⬜ |
 | 8 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
 
@@ -63,7 +63,7 @@ agent-hub/
 |------|----------|----------------|----------|
 | `cc-worker` | cc-tmux + Claude Code | 统一 session 生命周期、状态事件、turn-done/freeze 转译、gate 结果回传 | 不 fork / 不改 cc-tmux；不绕过 cc-tmux 的安全门控 |
 | `codex-worker` | Codex CLI `codex exec` / app-server | 非 PTY 执行、流式状态、stdout JSONL 捕获、最终消息 byte-match、取消与超时治理 | 不强塞 tmux；不把 Codex 变成长期 PTY session |
-| `review-worker` | cc-tmux `gate/*.sh` | 统一客观验收、危险扫描、讨论/退回计数入口 | 不自动审批；不修改 cc-tmux gate；不执行生产力任务 |
+| `review-worker` | cc-tmux `gate/*.sh` packaged runtime assets | 统一客观验收、危险扫描、讨论/退回计数入口；iii runtime smoke 已通过 | 不自动审批；不修改 cc-tmux gate 原件；不执行生产力任务 |
 | `usage-worker` / `gc-worker` | 本地脚本 + iii | 用量/GC 辅助能力 | 不承担主任务执行 |
 
 控制面边界：iii 负责 worker catalog / call / trace，NATS 负责跨 worker event bus，Kanban 负责人类 gate 和 durable handoff。它们不替代 CC/Codex 的推理与工程执行能力。

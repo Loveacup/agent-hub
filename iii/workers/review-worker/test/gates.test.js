@@ -1,12 +1,15 @@
 // Phase 6 review-worker gate runner tests (RED phase)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const mod = await import('../src/gates.js').catch(() => ({}));
 const {
+  DEFAULT_COUNTER_GATE,
+  DEFAULT_DANGER_GATE,
+  DEFAULT_VERIFY_GATE,
   runGate,
   runDangerScan,
   runVerify,
@@ -22,6 +25,16 @@ async function fakeGate(dir, body) {
   await chmod(p, 0o755);
   return p;
 }
+
+test('default gate binaries are packaged runtime assets', async () => {
+  assert.ok(DEFAULT_DANGER_GATE, 'DEFAULT_DANGER_GATE must be exported');
+  assert.ok(DEFAULT_VERIFY_GATE, 'DEFAULT_VERIFY_GATE must be exported');
+  assert.ok(DEFAULT_COUNTER_GATE, 'DEFAULT_COUNTER_GATE must be exported');
+  assert.match(DEFAULT_DANGER_GATE, /review-worker\/scripts\/gate\/gate-danger\.sh$/);
+  await access(DEFAULT_DANGER_GATE);
+  await access(DEFAULT_VERIFY_GATE);
+  await access(DEFAULT_COUNTER_GATE);
+});
 
 test('mapDangerStatus maps gate-danger exit codes', () => {
   assert.ok(mapDangerStatus, 'mapDangerStatus must be implemented');
