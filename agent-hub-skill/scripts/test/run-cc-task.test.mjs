@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,6 +32,27 @@ async function writeFakeIii(dir, mode) {
   await writeFile(scriptPath, content, 'utf8');
   await chmod(scriptPath, 0o755);
   return { scriptPath, callsPath };
+}
+
+async function writeFakeWatcher(dir) {
+  const callsPath = join(dir, 'watcher-calls.jsonl');
+  const scriptPath = join(dir, 'fake-watcher.mjs');
+  const content = `#!/usr/bin/env node\nimport { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(callsPath)}, JSON.stringify({ args: process.argv.slice(2) }) + '\\n');\nsetTimeout(() => process.exit(0), 25);\n`;
+  await writeFile(scriptPath, content, 'utf8');
+  await chmod(scriptPath, 0o755);
+  return { scriptPath, callsPath };
+}
+
+async function waitForFile(path, attempts = 20) {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await stat(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw new Error(`file did not appear: ${path}`);
 }
 
 test('run-cc-task --help prints usage and exits zero', async () => {
@@ -126,6 +147,7 @@ test('run-cc-task executes after bridge ok and marks manifest watching', async (
   const contextPath = join(base, 'context.md');
   await writeFile(contextPath, 'hello context\n', 'utf8');
   const fake = await writeFakeIii(base, 'ok');
+  const watcher = await writeFakeWatcher(base);
   try {
     const res = await runScript([
       '--target', 'agent-hub',
@@ -133,6 +155,7 @@ test('run-cc-task executes after bridge ok and marks manifest watching', async (
       '--context', contextPath,
       '--base-dir', join(base, 'runs'),
       '--iii-bin', fake.scriptPath,
+      '--watcher-bin', watcher.scriptPath,
     ]);
     assert.equal(res.code, 0, res.stderr);
     const payload = JSON.parse(res.stdout);
@@ -170,6 +193,46 @@ test('run-cc-task records final.json when iii returns invalid JSON', async () =>
     assert.match(final.error, /invalid JSON/i);
     const manifest = JSON.parse(await readFile(payload.manifest_path, 'utf8'));
     assert.equal(manifest.status, 'failed');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('run-cc-task spawns watcher after execute success and records watcher metadata', async () => {
+  const base = await mkdtemp(join(tmpdir(), 'agent-hub-run-task-watcher-'));
+  const contextPath = join(base, 'context.md');
+  await writeFile(contextPath, 'hello context\n', 'utf8');
+  const fake = await writeFakeIii(base, 'ok');
+  const watcher = await writeFakeWatcher(base);
+  try {
+    const res = await runScript([
+      '--target', 'agent-hub',
+      '--task', 'test task',
+      '--context', contextPath,
+      '--base-dir', join(base, 'runs'),
+      '--iii-bin', fake.scriptPath,
+      '--watcher-bin', watcher.scriptPath,
+      '--watch-interval-ms', '10',
+      '--watch-max-ticks', '1',
+    ]);
+    assert.equal(res.code, 0, res.stderr);
+    const payload = JSON.parse(res.stdout);
+    assert.equal(payload.status, 'watching');
+    assert.ok(Number.isInteger(payload.watcher_pid));
+    assert.ok(payload.watcher_command.includes('hermes-cc-default-agent-hub-test'));
+    await waitForFile(watcher.callsPath);
+    const watcherCall = JSON.parse((await readFile(watcher.callsPath, 'utf8')).trim());
+    assert.deepEqual(watcherCall.args, [
+      '--session', 'hermes-cc-default-agent-hub-test',
+      '--interval-ms', '10',
+      '--max-ticks', '1',
+      '--output', payload.watch_path,
+    ]);
+    const manifest = JSON.parse(await readFile(payload.manifest_path, 'utf8'));
+    assert.equal(manifest.status, 'watching');
+    assert.equal(manifest.watcher.pid, payload.watcher_pid);
+    assert.equal(manifest.watcher.output, payload.watch_path);
+    assert.ok(manifest.watcher.command.includes(watcher.scriptPath));
   } finally {
     await rm(base, { recursive: true, force: true });
   }

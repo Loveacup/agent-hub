@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Phase 5 Runtime Orchestrator — run CC task skeleton.
-// Slice 2: parse args, validate context, create run manifest. Does not call iii unless future slices enable it.
+// Phase 5 Runtime Orchestrator — run single CC task.
+// Current slice: manifest → bridge_status → execute → detached watcher spawn.
+import { execPath } from 'node:process';
 import { isAbsolute } from 'node:path';
+import { spawn } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import {
   buildInitialManifest,
@@ -13,12 +15,14 @@ import {
 } from './lib/cc-run-manifest.mjs';
 import { DEFAULT_III_BIN, triggerIii } from './lib/iii-client.mjs';
 
+const DEFAULT_WATCHER_BIN = new URL('./cc-watch-session.mjs', import.meta.url).pathname;
+
 function usage() {
-  return `Usage: run-cc-task.mjs --target <name> --task <text> --context <absolute-path> [options]\n\nOptions:\n  --topic <topic-id>\n  --effort <high|medium|low>       default: high\n  --base-dir <dir>                 default: ${DEFAULT_RUN_BASE_DIR}\n  --iii-bin <path>                 default: ${DEFAULT_III_BIN}\n  --iii-address <host>             default: localhost\n  --iii-port <port>                default: 49134\n  --timeout-ms <ms>                default: 60000\n  --init-only                      create manifest only; do not call iii/CC\n  --help, -h\n`;
+  return `Usage: run-cc-task.mjs --target <name> --task <text> --context <absolute-path> [options]\n\nOptions:\n  --topic <topic-id>\n  --effort <high|medium|low>       default: high\n  --base-dir <dir>                 default: ${DEFAULT_RUN_BASE_DIR}\n  --iii-bin <path>                 default: ${DEFAULT_III_BIN}\n  --iii-address <host>             default: localhost\n  --iii-port <port>                default: 49134\n  --timeout-ms <ms>                default: 60000\n  --watcher-bin <path>             default: ${DEFAULT_WATCHER_BIN}\n  --watch-interval-ms <ms>         default: 15000\n  --watch-max-ticks <n>            default: 120\n  --watch-stale-after-ticks <n>    default: 0\n  --init-only                      create manifest only; do not call iii/CC\n  --help, -h\n`;
 }
 
 function parseArgs(argv) {
-  const args = { effort: 'high', base_dir: DEFAULT_RUN_BASE_DIR, init_only: false, iii_bin: DEFAULT_III_BIN, iii_address: 'localhost', iii_port: 49134, timeout_ms: 60_000 };
+  const args = { effort: 'high', base_dir: DEFAULT_RUN_BASE_DIR, init_only: false, iii_bin: DEFAULT_III_BIN, iii_address: 'localhost', iii_port: 49134, timeout_ms: 60_000, watcher_bin: DEFAULT_WATCHER_BIN, watch_interval_ms: 15_000, watch_max_ticks: 120, watch_stale_after_ticks: 0 };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--target') args.target = argv[++i];
@@ -31,6 +35,10 @@ function parseArgs(argv) {
     else if (a === '--iii-address') args.iii_address = argv[++i];
     else if (a === '--iii-port') args.iii_port = Number(argv[++i]);
     else if (a === '--timeout-ms') args.timeout_ms = Number(argv[++i]);
+    else if (a === '--watcher-bin') args.watcher_bin = argv[++i];
+    else if (a === '--watch-interval-ms') args.watch_interval_ms = Number(argv[++i]);
+    else if (a === '--watch-max-ticks') args.watch_max_ticks = Number(argv[++i]);
+    else if (a === '--watch-stale-after-ticks') args.watch_stale_after_ticks = Number(argv[++i]);
     else if (a === '--init-only') args.init_only = true;
     else if (a === '--help' || a === '-h') args.help = true;
     else throw new Error(`unknown arg: ${a}`);
@@ -59,12 +67,46 @@ function outputPayload({ manifest, paths, extra = {} }) {
     status: manifest.status,
     run_id: manifest.run_id,
     ...(manifest.session_id ? { session_id: manifest.session_id } : {}),
+    ...(manifest.watcher?.pid ? { watcher_pid: manifest.watcher.pid, watcher_command: manifest.watcher.command } : {}),
     manifest_path: paths.manifest,
     watch_path: paths.watch,
     suggestions_path: paths.suggestions,
     interventions_path: paths.interventions,
     final_path: paths.final,
     ...extra,
+  };
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
+}
+
+function buildWatcherArgs({ session_id, paths, args }) {
+  const watcherArgs = [
+    '--session', session_id,
+    '--interval-ms', String(args.watch_interval_ms),
+    '--max-ticks', String(args.watch_max_ticks),
+    '--output', paths.watch,
+  ];
+  if (args.watch_stale_after_ticks > 0) {
+    watcherArgs.push('--stale-after-ticks', String(args.watch_stale_after_ticks));
+  }
+  return watcherArgs;
+}
+
+function spawnWatcher({ session_id, paths, args }) {
+  const watcherArgs = buildWatcherArgs({ session_id, paths, args });
+  const child = spawn(execPath, [args.watcher_bin, ...watcherArgs], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  return {
+    pid: child.pid,
+    bin: args.watcher_bin,
+    args: watcherArgs,
+    output: paths.watch,
+    command: [execPath, args.watcher_bin, ...watcherArgs].map(shellQuote).join(' '),
   };
 }
 
@@ -150,7 +192,9 @@ async function main() {
       process.exit(1);
     }
 
-    manifest = updateManifestStatus(manifest, { status: 'watching', session_id: execute.session_id || '' });
+    const session_id = execute.session_id || '';
+    const watcher = spawnWatcher({ session_id, paths, args });
+    manifest = updateManifestStatus(manifest, { status: 'watching', session_id, extra: { watcher } });
     await writeManifest(manifest);
     process.stdout.write(`${JSON.stringify(outputPayload({ manifest, paths }))}\n`);
   } catch (err) {
