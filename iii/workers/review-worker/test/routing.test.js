@@ -137,3 +137,37 @@ test('decideRoute unknown tasks default to review with audit-friendly decision_c
   assert.equal(res.decision_code, 'DEFAULT_REVIEW');
   assert.match(res.reason, /default safe route/i);
 });
+
+
+test('decideRoute optionally publishes route decision event without changing execute=false', async () => {
+  const published = [];
+  const res = await decideRoute({
+    task: 'run a small test and summarize output',
+    constraints: { requires_code_execution: true, risk: 'low' },
+    publishDecision: async (subject, payload) => published.push({ subject, payload }),
+    publish_route_event: true,
+    run_id: 'route-smoke-1',
+  });
+  assert.equal(res.lane, 'codex');
+  assert.equal(res.execute, false);
+  assert.equal(res.publish_status, 'published');
+  assert.equal(published.length, 1);
+  assert.equal(published[0].subject, 'agent.route.decision');
+  assert.equal(published[0].payload.kind, 'agent.route.decision');
+  assert.equal(published[0].payload.run_id, 'route-smoke-1');
+  assert.equal(published[0].payload.decision.lane, 'codex');
+  assert.equal(published[0].payload.decision.execute, false);
+});
+
+test('decideRoute reports publish_failed but preserves decision when publisher throws', async () => {
+  const res = await decideRoute({
+    task: 'monitor a Claude Code session',
+    constraints: { requires_realtime: true },
+    publishDecision: async () => { throw new Error('nats offline'); },
+    publish_route_event: true,
+  });
+  assert.equal(res.lane, 'cc');
+  assert.equal(res.execute, false);
+  assert.equal(res.publish_status, 'publish_failed');
+  assert.match(res.publish_error, /nats offline/);
+});
