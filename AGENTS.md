@@ -1,7 +1,7 @@
 # AGENTS.md · agent-hub
 
 > **Canonical 架构参考。在本代码库工作前先读这里。**
-> 分工：本文件 = 实现/架构权威；需求权威在 OB `02-Plan&CQI/agent-hub PRD.md`。
+> 分工：本文件 = 实现/架构权威；需求权威在 OB `20-Areas/20_技术项目/agent-hub/10_核心/agent-hub PRD.md`，路线图权威在 OB `20-Areas/20_技术项目/agent-hub/10_核心/agent-hub 路线图.md`。
 
 ## 是什么
 
@@ -41,15 +41,20 @@ agent-hub/
 
 ## 路线图
 
+> 路线图权威：OB `10_核心/agent-hub 路线图.md`。本表为代码库内嵌快照。
+
 | Phase | 内容 | 状态 |
 |:--:|------|:--:|
 | 0 | 装 iii + POC 验证 | ✅ |
-| 1 | usage-worker · 替代 cc-usage.sh | 🔵 |
-| 2 | gc-worker · 替代 cc-gc.sh | 🔵 |
-| 3 | cc-worker · wrap cc-tmux（不 fork） | 🔵 |
-| 4 | codex-worker · Codex exec/app-server lane | 🔵 |
-| 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive） | 🟡 Slice 4 |
-| 6 | omp-worker / 多 CLI 并行 + review-worker | 🔵 |
+| 1 | usage-worker · 替代 cc-usage.sh | ✅ |
+| 2 | gc-worker · 替代 cc-gc.sh | ✅ |
+| 3 | cc-worker · wrap cc-tmux（不 fork） | ✅ |
+| 3b | cc-worker 实时控制 MVP（execute/monitor/intervene/watcher） | ✅ |
+| 4 | codex-worker · Codex `codex exec` lane | ✅ |
+| 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive）★ Alex 核心诉求 | 🟡 Slice 4 |
+| 6 | omp-worker + review-worker + 多 CLI routing | ⬜ |
+| 7 | ssh-worker PoC · 自有远程执行（不依赖 askills） | ⬜ |
+| 8 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
 
 ## Worker lane 分工
 
