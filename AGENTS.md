@@ -53,9 +53,10 @@ agent-hub/
 | 3b | cc-worker 实时控制 MVP（execute/monitor/intervene/watcher） | ✅ |
 | 4 | codex-worker · Codex `codex exec` lane | ✅ |
 | 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive）★ Alex 核心诉求 | ✅ MVP slices 1-6 + fake E2E smoke |
-| 6 | review-worker gate-runner + routing registry/policy + NATS event publishing + 后续 omp-worker | ✅ Slice 1-5 |
-| 7 | ssh-worker PoC · 自有远程执行（不依赖 askills） | ⬜ |
-| 8 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
+| 6 | review-worker gate-runner + routing registry/policy + NATS event publishing | ✅ Slice 1-5 |
+| 7 | omp-worker · OMP profile lifecycle manager（registry/discover/render/validate/audit） | 🟡 Slice 1（registry + validator） |
+| 8 | ssh-worker PoC · 自有远程执行（不依赖 askills） | ⬜ |
+| 9 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
 
 ## Worker lane 分工
 

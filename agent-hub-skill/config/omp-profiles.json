@@ -1,0 +1,41 @@
+{
+  "kind": "omp.profile.registry",
+  "version": 1,
+  "profiles": [
+    {
+      "name": "page",
+      "display_name": "Page",
+      "cn_name": "知识库治理",
+      "role": "knowledge-governance",
+      "status": "planned",
+      "risk_level": "read_only",
+      "permissions": {
+        "read_profile_metadata": true,
+        "read_recent_summary": true,
+        "write_files": false,
+        "run_shell": false,
+        "send_external_messages": false,
+        "external_network": false
+      },
+      "subjects": {
+        "summary": "agent.omp.profile.page.summary",
+        "audit": "agent.omp.profile.page.audit"
+      },
+      "paths": {
+        "agent_dir": "~/.omp/profiles/page/agent",
+        "config": "~/.omp/profiles/page/agent/config.yml",
+        "mcp": "~/.omp/profiles/page/agent/mcp.json",
+        "env_example": "~/.omp/profiles/page/agent/.env.example"
+      },
+      "gateway": {
+        "mode": "none",
+        "platforms": []
+      },
+      "validation": {
+        "last_checked_at": null,
+        "status": "unknown",
+        "errors": []
+      }
+    }
+  ]
+}

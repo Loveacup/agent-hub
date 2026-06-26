@@ -1,0 +1,12 @@
+{
+  "name": "omp-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 7 omp-worker — OMP profile lifecycle manager (Slice 1: registry + validator only)",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test"
+  }
+}

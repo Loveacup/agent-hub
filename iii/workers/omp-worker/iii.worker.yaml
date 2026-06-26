@@ -1,0 +1,9 @@
+name: omp-worker
+# Phase 7 Slice 1 skeleton ONLY — not registered in iii/config.yaml.
+# Slice 1 ships registry + pure validator (no runtime discovery / render / apply / NATS / routing).
+runtime:
+  # Base OCI image used as the worker rootfs.
+  base_image: docker.io/iiidev/node:latest
+scripts:
+  install: npm install
+  start: npm run dev
