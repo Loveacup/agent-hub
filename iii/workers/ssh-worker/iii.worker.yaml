@@ -1,0 +1,13 @@
+name: ssh-worker
+# Phase 8 Slice 1 skeleton ONLY — not registered in iii/config.yaml.
+# Slice 1 ships host registry validator + list_hosts + read-only preflight
+# (injected runner) + fail-closed entry + NATS subject sanitizer.
+# NO real SSH connection, NO remote write, NO remote codex exec,
+# NO real NATS publish, NO askills call. acquire/execute/terminate_remote
+# are Slice 2 and remain unsupported (execute=false).
+runtime:
+  # Base OCI image used as the worker rootfs.
+  base_image: docker.io/iiidev/node:latest
+scripts:
+  install: npm install
+  start: npm run dev

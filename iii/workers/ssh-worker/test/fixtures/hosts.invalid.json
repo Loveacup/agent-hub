@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "hosts": [
+    { "id": "nas-01" },
+    { "id": "nas-01", "ssh_host": "dup.local" },
+    { "id": "bad_id!", "ssh_host": "bad.local" },
+    { "id": "has-secret", "ssh_host": "sec.local", "ssh_key": "-----BEGIN OPENSSH PRIVATE KEY-----" }
+  ]
+}

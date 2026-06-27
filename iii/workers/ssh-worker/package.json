@@ -1,0 +1,12 @@
+{
+  "name": "ssh-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 8 ssh-worker PoC (Slice 1: host registry validator + list_hosts + read-only preflight via injected runner + fail-closed runtime entry + NATS subject sanitizer; not registered in iii/config.yaml, no real SSH/NATS/askills, all execute=false)",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test"
+  }
+}

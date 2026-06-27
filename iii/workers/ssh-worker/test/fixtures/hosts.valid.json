@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "hosts": [
+    {
+      "id": "nas-01",
+      "label": "NAS 01",
+      "ssh_alias": "nas-01",
+      "ssh_host": "nas.local",
+      "ssh_port": 22,
+      "ssh_user": "alex",
+      "runtimes": [
+        { "name": "codex", "command": "codex", "preflight": ["command -v codex"] }
+      ],
+      "askills_device_id": "alex-nas",
+      "enabled": true,
+      "tags": ["lab"]
+    },
+    {
+      "id": "pi-02",
+      "label": "Pi 02",
+      "ssh_alias": "pi-02",
+      "ssh_host": "pi.local",
+      "ssh_port": 22,
+      "ssh_user": "pi",
+      "runtimes": [
+        { "name": "codex", "command": "codex", "preflight": ["command -v codex"] }
+      ],
+      "enabled": false,
+      "tags": ["edge"]
+    }
+  ]
+}
