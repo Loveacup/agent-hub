@@ -1,7 +1,23 @@
 // Phase 1 usage-worker — 编排层单测 (依赖注入, 不触真实 npx/nats/fs)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runCheck, buildNatsPublishFrame, defaultExec, resolveDefaultStatePath } from '../src/collect.js';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { runCheck, buildNatsPublishFrame, defaultExec, resolveDefaultStatePath, resolveCcusageTimeoutMs, DEFAULT_CCUSAGE_TIMEOUT_MS } from '../src/collect.js';
+
+// 假 child：EventEmitter + PassThrough stdout/stderr，永不触真实 npx。
+function fakeChild(pid = 4242) {
+  const child = new EventEmitter();
+  child.pid = pid;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.killedWith = null;
+  child.kill = (sig) => { child.killedWith = sig; return true; };
+  return child;
+}
+
+// 让注入的 stdout/stderr 'data' 事件先于 close 被处理（PassThrough 异步派发）。
+const flush = () => new Promise((r) => setImmediate(r));
 
 const ccusageOut = {
   daily: [
@@ -97,9 +113,178 @@ test('resolveDefaultStatePath 在 host 端回退 repo state 路径', () => {
   assert.equal(path, '/repo/state/usage-worker.json');
 });
 
-test('defaultExec 返回 Promise，避免 execFileSync 阻塞事件循环', () => {
-  const result = defaultExec({ execFileImpl: (_cmd, _args, _opts, cb) => cb(null, '{"daily":[{"date":"2026-06-25","totalTokens":1}]}', '') });
+test('defaultExec 返回 Promise，避免同步 child process 阻塞事件循环', () => {
+  const child = fakeChild();
+  const result = defaultExec({ spawnImpl: () => child, killImpl: () => {}, timeoutMs: 10_000 });
   assert.equal(typeof result.then, 'function');
+  // 收尾，避免悬挂 timer/promise
+  child.stdout.end('{"daily":[{"date":"2026-06-25","totalTokens":1}]}');
+  return flush().then(() => { child.emit('close', 0, null); return result; });
+});
+
+test('defaultExec 用 spawn 调用 npx ccusage claude --json，POSIX 下 detached（整组可 kill）', async () => {
+  let cmd, args, opts;
+  const child = fakeChild();
+  const p = defaultExec({
+    spawnImpl: (c, a, o) => { cmd = c; args = a; opts = o; return child; },
+    killImpl: () => {},
+    timeoutMs: 10_000,
+  });
+  child.stdout.end('{"daily":[{"date":"2026-06-25","totalTokens":1}]}');
+  await flush();
+  child.emit('close', 0, null);
+  await p;
+  assert.equal(cmd, 'npx');
+  assert.deepEqual(args, ['ccusage', 'claude', '--json']);
+  assert.equal(opts.detached, process.platform !== 'win32');
+  assert.deepEqual(opts.stdio, ['ignore', 'pipe', 'pipe']);
+});
+
+test('defaultExec 成功(code 0) → JSON.parse(stdout) 后 resolve', async () => {
+  const child = fakeChild();
+  const p = defaultExec({ spawnImpl: () => child, killImpl: () => {}, timeoutMs: 10_000 });
+  child.stdout.end('{"daily":[{"date":"2026-06-25","totalTokens":42}]}');
+  await flush();
+  child.emit('close', 0, null);
+  const out = await p;
+  assert.equal(out.daily[0].totalTokens, 42);
+});
+
+test('defaultExec 超时 → kill 整个进程组(-pid, SIGKILL) 且 reject CCUSAGE_TIMEOUT', async () => {
+  let killArgs = null;
+  const child = fakeChild(777);
+  const p = defaultExec({
+    spawnImpl: () => child,
+    killImpl: (pid, sig) => { killArgs = [pid, sig]; },
+    timeoutMs: 5,
+  });
+  await assert.rejects(p, (err) => {
+    assert.equal(err.code, 'CCUSAGE_TIMEOUT');
+    assert.match(err.message, /ccusage timed out/);
+    return true;
+  });
+  if (process.platform !== 'win32') {
+    // 关键 P1 断言：负 pid → 杀进程组，连带 node/ccusage 孙进程，不留孤儿。
+    assert.deepEqual(killArgs, [-777, 'SIGKILL']);
+  } else {
+    assert.equal(child.killedWith, 'SIGKILL');
+  }
+});
+
+test('defaultExec 非零退出 → reject CCUSAGE_EXIT_NONZERO 且截断 stderr 预览', async () => {
+  const child = fakeChild();
+  const huge = 'x'.repeat(50_000);
+  const p = defaultExec({ spawnImpl: () => child, killImpl: () => {}, timeoutMs: 10_000 });
+  child.stderr.end(huge);
+  await flush();
+  child.emit('close', 2, null);
+  await assert.rejects(p, (err) => {
+    assert.equal(err.code, 'CCUSAGE_EXIT_NONZERO');
+    assert.equal(err.exitCode, 2);
+    assert.ok(err.message.length < huge.length, 'stderr 预览应被截断');
+    return true;
+  });
+});
+
+test('defaultExec stdout 超 maxBuffer → kill 进程组并 reject CCUSAGE_MAX_BUFFER', async () => {
+  let killArgs = null;
+  const child = fakeChild(999);
+  const p = defaultExec({
+    spawnImpl: () => child,
+    killImpl: (pid, sig) => { killArgs = [pid, sig]; },
+    timeoutMs: 10_000,
+    maxBuffer: 10,
+  });
+  child.stdout.write('this chunk is definitely longer than ten bytes');
+  await assert.rejects(p, (err) => {
+    assert.equal(err.code, 'CCUSAGE_MAX_BUFFER');
+    return true;
+  });
+  if (process.platform !== 'win32') {
+    assert.deepEqual(killArgs, [-999, 'SIGKILL']);
+  } else {
+    assert.equal(child.killedWith, 'SIGKILL');
+  }
+});
+
+test('defaultExec stderr 超 maxBuffer → kill 进程组并 reject CCUSAGE_MAX_BUFFER', async () => {
+  let killArgs = null;
+  const child = fakeChild(888);
+  const p = defaultExec({
+    spawnImpl: () => child,
+    killImpl: (pid, sig) => { killArgs = [pid, sig]; },
+    timeoutMs: 10_000,
+    maxBuffer: 10,
+  });
+  child.stderr.write('this stderr chunk is definitely longer than ten bytes');
+  await assert.rejects(p, (err) => {
+    assert.equal(err.code, 'CCUSAGE_MAX_BUFFER');
+    return true;
+  });
+  if (process.platform !== 'win32') {
+    assert.deepEqual(killArgs, [-888, 'SIGKILL']);
+  } else {
+    assert.equal(child.killedWith, 'SIGKILL');
+  }
+});
+
+test('defaultExec stderr 先写后 stdout 写、合计超 maxBuffer → 共享预算仍 kill 并 reject CCUSAGE_MAX_BUFFER', async () => {
+  // 回归：stderr 先写 6B（单独看不超 10），stdout 后写 6B；若 stdout 仅判 stdoutBytes>maxBuffer
+  // 会按到达顺序绕过共享预算（Codex BLOCKER）。stdout 必须按 stdoutBytes+stderrBytes 判定。
+  let killArgs = null;
+  const child = fakeChild(7777);
+  const p = defaultExec({
+    spawnImpl: () => child,
+    killImpl: (pid, sig) => { killArgs = [pid, sig]; },
+    timeoutMs: 10_000,
+    maxBuffer: 10,
+  });
+  child.stderr.write('aaaaaa'); // 6B：stderrBytes=6，不超 10
+  await flush();
+  child.stdout.write('bbbbbb'); // 6B：stdoutBytes+stderrBytes=12 > 10 → kill
+  await assert.rejects(p, (err) => {
+    assert.equal(err.code, 'CCUSAGE_MAX_BUFFER');
+    return true;
+  });
+  if (process.platform !== 'win32') {
+    assert.deepEqual(killArgs, [-7777, 'SIGKILL']);
+  } else {
+    assert.equal(child.killedWith, 'SIGKILL');
+  }
+});
+
+test('defaultExec stderr 远超预览上限也不会无界增长（巨量 stderr 内存有界）', async () => {
+  // 关键回归断言：stderr 即便累计 1MB，进程内只保留 STDERR_PREVIEW_LIMIT 字符的预览。
+  const child = fakeChild();
+  // maxBuffer 给足，确保走的是「按 chunk 截断累积」而非「超 maxBuffer 直接 kill」分支。
+  const p = defaultExec({ spawnImpl: () => child, killImpl: () => {}, timeoutMs: 10_000, maxBuffer: 64 * 1024 * 1024 });
+  for (let i = 0; i < 1000; i++) child.stderr.write('y'.repeat(1024));
+  await flush();
+  child.emit('close', 3, null);
+  await assert.rejects(p, (err) => {
+    assert.equal(err.code, 'CCUSAGE_EXIT_NONZERO');
+    assert.equal(err.exitCode, 3);
+    // 1000*1024 ≈ 1MB stderr，但错误 message 仍被预览上限钳住，证明 stderr 未无界保留。
+    assert.ok(err.message.length < 5_000, `error message 应有界，实际=${err.message.length}`);
+    return true;
+  });
+});
+
+test('defaultExec spawn error 原样 reject（如 npx 不存在）', async () => {
+  const child = fakeChild();
+  const p = defaultExec({ spawnImpl: () => child, killImpl: () => {}, timeoutMs: 10_000 });
+  child.emit('error', Object.assign(new Error('spawn npx ENOENT'), { code: 'ENOENT' }));
+  await assert.rejects(p, /ENOENT/);
+});
+
+test('resolveCcusageTimeoutMs: 合法值生效，非法值安全回退默认', () => {
+  assert.equal(resolveCcusageTimeoutMs('1234'), 1234);
+  assert.equal(resolveCcusageTimeoutMs(5000), 5000);
+  assert.equal(resolveCcusageTimeoutMs(undefined), DEFAULT_CCUSAGE_TIMEOUT_MS);
+  assert.equal(resolveCcusageTimeoutMs(''), DEFAULT_CCUSAGE_TIMEOUT_MS);
+  assert.equal(resolveCcusageTimeoutMs('not-a-number'), DEFAULT_CCUSAGE_TIMEOUT_MS);
+  assert.equal(resolveCcusageTimeoutMs('0'), DEFAULT_CCUSAGE_TIMEOUT_MS);
+  assert.equal(resolveCcusageTimeoutMs('-5'), DEFAULT_CCUSAGE_TIMEOUT_MS);
 });
 
 test('buildNatsPublishFrame 生成 NATS PUB 协议帧', () => {

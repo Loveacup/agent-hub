@@ -1,7 +1,7 @@
 // Phase 1 usage-worker — 编排 + 副作用薄壳
 // 纯逻辑全部委托 usage.js; 本文件只负责: 跑 ccusage / nats pub / 读写 state 文件。
 // runCheck 接收注入的 deps (默认真实实现), 便于单测替身。
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -42,22 +42,158 @@ function parseNatsUrl(url = NATS_SERVER) {
 
 // ---- 默认真实副作用实现 ----
 
+// ccusage 采集硬超时。无界等待会让挂死的 npx/ccusage 子进程长期占用 CPU/swap（live incident 根因）。
+export const DEFAULT_CCUSAGE_TIMEOUT_MS = 30_000;
+// 非零退出时 stderr 预览上限：避免把挂死/报错的 ccusage 巨量 stderr 灌进日志/异常。
+const STDERR_PREVIEW_LIMIT = 2_000;
+
+// 把 USAGE_CCUSAGE_TIMEOUT_MS 解析成正整数毫秒；非法（NaN/0/负数/空）一律安全回退默认值。
+export function resolveCcusageTimeoutMs(raw) {
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return DEFAULT_CCUSAGE_TIMEOUT_MS;
+}
+
 // A2/A7: 用量来自 `npx ccusage claude --json`, 不直接解析表格文本。
 // 必须异步，避免 iii worker event loop 被同步 child process 阻塞。
-export function defaultExec({ execFileImpl = execFile } = {}) {
-  return new Promise((resolve, reject) => {
-    execFileImpl('npx', ['ccusage', 'claude', '--json'], {
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024,
-    }, (err, stdout) => {
-      if (err) return reject(err);
+//
+// 为什么用 spawn(detached) 而不是 execFile timeout（Codex P1）：
+//   execFile 的 timeout 只 SIGKILL 直接子进程（npx）。npx 会再 fork 出 node/ccusage 孙进程；
+//   杀掉 npx 后这些孙进程会脱离父进程成为孤儿，继续占用 CPU/swap（live incident：worker 停了
+//   ccusage --json 子进程仍短暂发烫）。
+//   detached:true 让 npx 成为新进程组组长（pgid == npx.pid），超时/超 buffer 时用
+//   kill(-pid, SIGKILL) 对「整个进程组」下手，npx 及其 node/ccusage 子孙一起被收割，杜绝孤儿热循环。
+export function defaultExec({
+  spawnImpl = spawn,
+  killImpl = process.kill,
+  timeoutMs = resolveCcusageTimeoutMs(process.env.USAGE_CCUSAGE_TIMEOUT_MS),
+  maxBuffer = 16 * 1024 * 1024,
+} = {}) {
+  return new Promise((resolvePromise, reject) => {
+    const isPosix = process.platform !== 'win32';
+    const child = spawnImpl('npx', ['ccusage', 'claude', '--json'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: isPosix,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let settled = false;
+    let timer = null;
+
+    // POSIX: kill(-pid) 杀的是「pgid==pid 的整个进程组」(detached 下 npx 即组长)，
+    // 连带 node/ccusage 孙进程一并 SIGKILL。Windows 无进程组语义，退回 child.kill()。
+    const killTree = (signal) => {
       try {
-        return resolve(JSON.parse(stdout));
-      } catch (parseErr) {
-        return reject(parseErr);
+        if (isPosix && typeof child.pid === 'number') {
+          killImpl(-child.pid, signal);
+        } else if (typeof child.kill === 'function') {
+          child.kill(signal);
+        } else if (typeof child.pid === 'number') {
+          killImpl(child.pid, signal);
+        }
+      } catch {
+        // 进程组已退出 (ESRCH 等) 时忽略；目标本就是「确保它死」。
       }
+    };
+
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn(arg);
+    };
+
+    timer = setTimeout(() => {
+      killTree('SIGKILL');
+      const err = new Error(`ccusage timed out after ${timeoutMs}ms and its process group was killed (SIGKILL)`);
+      err.code = 'CCUSAGE_TIMEOUT';
+      finish(reject, err);
+    }, timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    child.on('error', (err) => finish(reject, err));
+
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        // 与 stderr 共享 maxBuffer 预算：必须用 stdout+stderr 总量判定，否则按到达顺序
+        // (如 stderr 先写 6B、stdout 后写 6B、maxBuffer=10) 单独看 stdoutBytes 不超标会绕过
+        // 总预算上限，泄漏内存（Codex 复核 BLOCKER）。
+        stdoutBytes += Buffer.byteLength(chunk, 'utf8');
+        if (stdoutBytes + stderrBytes > maxBuffer) {
+          killTree('SIGKILL');
+          const err = new Error(`ccusage stdout exceeded maxBuffer (${maxBuffer} bytes); process group killed`);
+          err.code = 'CCUSAGE_MAX_BUFFER';
+          return finish(reject, err);
+        }
+        stdout += chunk;
+      });
+    }
+    if (child.stderr) {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => {
+        // stderr 与 stdout 共享 maxBuffer 预算：挂死/抓狂的 ccusage 可能只往 stderr 狂吐，
+        // 若不计入预算就会绕过 maxBuffer 把内存灌爆（live incident 的 swap 压力面）。
+        stderrBytes += Buffer.byteLength(chunk, 'utf8');
+        if (stdoutBytes + stderrBytes > maxBuffer) {
+          killTree('SIGKILL');
+          const err = new Error(`ccusage stderr exceeded maxBuffer (${maxBuffer} bytes); process group killed`);
+          err.code = 'CCUSAGE_MAX_BUFFER';
+          return finish(reject, err);
+        }
+        // 只为错误预览保留前 STDERR_PREVIEW_LIMIT 字符，超出部分直接丢弃 → stderr 内存恒有界。
+        if (stderr.length < STDERR_PREVIEW_LIMIT) {
+          stderr += chunk.slice(0, STDERR_PREVIEW_LIMIT - stderr.length);
+        }
+      });
+    }
+
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      if (code === 0) {
+        try {
+          return finish(resolvePromise, JSON.parse(stdout));
+        } catch (parseErr) {
+          return finish(reject, parseErr);
+        }
+      }
+      // 非零退出：不把巨量 stderr 原样抛出，只截断预览，避免污染日志。
+      const preview = stderr.slice(0, STDERR_PREVIEW_LIMIT);
+      const err = new Error(
+        `ccusage exited non-zero (code=${code}${signal ? `, signal=${signal}` : ''}): ${preview}`,
+      );
+      err.code = 'CCUSAGE_EXIT_NONZERO';
+      err.exitCode = code;
+      err.signal = signal;
+      finish(reject, err);
     });
   });
+}
+
+// 周期采集 singleflight 守卫。若上一次 runCheck 仍在 flight，本次直接跳过并 warn，
+// 避免慢/挂死的 ccusage 让周期 interval 不断叠加子进程（live incident 根因之一）。
+// 纯逻辑 + 依赖注入，可脱离 iii engine / 真实计时器单测。
+export function createPeriodicUsageCollector({ runCheckFn, logger = console } = {}) {
+  let inFlight = false;
+  return async function collectOnce() {
+    if (inFlight) {
+      logger.warn('usage-worker periodic check skipped: previous check still running');
+      return { skipped: true };
+    }
+    inFlight = true;
+    try {
+      const result = await runCheckFn();
+      return { skipped: false, result };
+    } catch (err) {
+      logger.error('usage-worker periodic check failed', err);
+      return { skipped: false, error: err };
+    } finally {
+      inFlight = false;
+    }
+  };
 }
 
 // A4: 发布 NATS agent.usage.alert（零依赖 TCP NATS protocol，不依赖 VM 内 nats CLI）。
