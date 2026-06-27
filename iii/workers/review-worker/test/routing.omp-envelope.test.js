@@ -142,6 +142,16 @@ test('decideRoute publishes a typed envelope decision via injected publisher (me
   assert.ok(!json.includes(BODY));
 });
 
+// ── Slice 9A: routing.js no longer reaches across into omp-worker's source ───
+// The typed-envelope validator now lives in the shared contract module. routing.js
+// must import it from there and must NOT contain the cross-worker relative path.
+test('routing.js imports the validator from the shared contract, not from omp-worker', () => {
+  const routingPath = fileURLToPath(new URL('../src/routing.js', import.meta.url));
+  const src = readFileSync(routingPath, 'utf8');
+  assert.ok(!src.includes('../../omp-worker/src/envelope.js'), 'routing.js must not import from omp-worker/src/envelope.js');
+  assert.ok(/from\s+['"]\.\.\/\.\.\/shared\/omp-contract\.js['"]/.test(src), 'routing.js must import the validator from ../../shared/omp-contract.js');
+});
+
 // ── 13. config.yaml still registers no OMP worker runtime lane ───────────────
 test('iii/config.yaml still does not register an omp-worker runtime lane', () => {
   const configPath = fileURLToPath(new URL('../../../config.yaml', import.meta.url));

@@ -1,11 +1,13 @@
 // Phase 6 Slice 3 — deterministic routing registry.
 // This module only decides; it never executes the selected lane.
 
-// Phase 7 Slice 8: the typed OMP lifecycle envelope validator is the single
-// source of truth for envelope shape/safety. It is PURE (no fs/process.env/
-// subprocess/network) and metadata-only, so importing it here adds no runtime
-// capability — recognition stays execute=false and never enables an OMP lane.
-import { validateOmpLifecycleEnvelope } from '../../omp-worker/src/envelope.js';
+// Phase 7 Slice 9A: the typed OMP lifecycle envelope validator is the single
+// source of truth for envelope shape/safety. It now lives in the SHARED contract
+// module so review-worker no longer reaches across into omp-worker's source. It
+// is PURE (no fs/process.env/subprocess/network) and metadata-only, so importing
+// it here adds no runtime capability — recognition stays execute=false and never
+// enables an OMP lane.
+import { validateOmpLifecycleEnvelope } from '../../shared/omp-contract.js';
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
