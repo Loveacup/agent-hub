@@ -1,6 +1,16 @@
 // Phase 6 Slice 3 — deterministic routing registry.
 // This module only decides; it never executes the selected lane.
 
+// Phase 7 Slice 8: the typed OMP lifecycle envelope validator is the single
+// source of truth for envelope shape/safety. It is PURE (no fs/process.env/
+// subprocess/network) and metadata-only, so importing it here adds no runtime
+// capability — recognition stays execute=false and never enables an OMP lane.
+import { validateOmpLifecycleEnvelope } from '../../omp-worker/src/envelope.js';
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function defaultWorkerCatalog() {
   return {
     cc: {
@@ -193,6 +203,61 @@ function decideOmpRoute({ taskText, rawConstraints, constraints, catalog }) {
   return null;
 }
 
+// ── Typed OMP lifecycle envelope recognition (Phase 7 Slice 8) ───────────────
+// A typed envelope is an object `task` of the documented shape
+//   { task: { type: 'omp.lifecycle', action, profile? }, constraints, run_id? }.
+// It is recognized BEFORE legacy regex text detection but, like every OMP route,
+// NEVER enables an OMP runtime: success and rejection both stay execute=false,
+// fall back to the review/control plane, and carry the monitorability contract.
+// Only the validator's SANITIZED envelope / error codes are attached as evidence
+// — no raw forbidden field (body/payload/secret/session/log/transcript) survives.
+function isTypedOmpEnvelope(task) {
+  return isPlainObject(task) && isPlainObject(task.task) && task.task.type === 'omp.lifecycle';
+}
+
+function decideTypedOmpEnvelopeRoute({ task, constraints, catalog, run_id }) {
+  if (!isTypedOmpEnvelope(task)) return null;
+  const runtimeAvailable = catalog.omp?.available === true;
+  const result = validateOmpLifecycleEnvelope(task);
+
+  if (!result.ok) {
+    return withControlPlane({
+      ...decision({
+        lane: 'review',
+        decision_code: result.decision_code,
+        reason: `typed OMP lifecycle envelope rejected (${result.reason}); route to review (execute=false)`,
+        requires_review: true,
+        constraints,
+        catalog,
+        run_id,
+        control_lane: 'omp',
+      }),
+      envelope_valid: false,
+      // evidence is error codes/paths only — never raw forbidden values.
+      envelope_errors: result.errors,
+    }, runtimeAvailable);
+  }
+
+  const env = result.envelope;
+  return withControlPlane({
+    ...decision({
+      lane: 'review',
+      decision_code: 'omp_typed_lifecycle_review_required',
+      reason: runtimeAvailable
+        ? `typed OMP lifecycle envelope recognized (action=${env.action}); route to review gate before any OMP action (execute=false, monitored)`
+        : `typed OMP lifecycle envelope recognized (action=${env.action}) but OMP runtime lane is unavailable (${catalog.omp?.reason ?? 'omp lane disabled'}); route to review (execute=false, monitored, not intervenable)`,
+      requires_review: true,
+      constraints,
+      catalog,
+      run_id: env.run_id ?? run_id,
+      control_lane: 'omp',
+    }),
+    envelope_valid: true,
+    envelope: env, // sanitized, metadata-only
+    envelope_warnings: result.warnings,
+  }, runtimeAvailable);
+}
+
 function routeEventPayload(decision) {
   return {
     kind: 'agent.route.decision',
@@ -223,6 +288,16 @@ function maybePublish(decision, { publish_route_event, publishDecision, run_id }
 export function decideRoute({ task = '', constraints: rawConstraints = {}, available_workers = {}, publish_route_event = false, publishDecision, run_id = null } = {}) {
   const constraints = normalizeConstraints(rawConstraints);
   const catalog = mergedCatalog(available_workers);
+
+  // Phase 7 Slice 8: a TYPED OMP lifecycle envelope (object `task`) is recognized
+  // before any text detection — always execute=false, review fallback, with the
+  // sanitized envelope's run_id propagated to the decision.
+  const typedDecision = decideTypedOmpEnvelopeRoute({ task, constraints, catalog, run_id });
+  if (typedDecision) {
+    const rid = typedDecision.envelope?.run_id ?? run_id;
+    return maybePublish(typedDecision, { publish_route_event, publishDecision, run_id: rid });
+  }
+
   const taskText = String(task).toLowerCase();
 
   // Phase 7 Slice 6: recognize OMP lifecycle intents (and deny unsafe OMP asks)
