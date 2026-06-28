@@ -2,6 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { normalizeConstraints } from './run-constraints.mjs';
 
 export const DEFAULT_RUN_BASE_DIR = '/tmp/agent-hub-runs';
 
@@ -36,6 +37,7 @@ export function buildInitialManifest({
   topic = '',
   effort = 'high',
   paths,
+  constraints,
   now = new Date(),
 } = {}) {
   if (!run_id) throw new Error('run_id is required');
@@ -45,6 +47,7 @@ export function buildInitialManifest({
   if (!isAbsolute(context_path)) throw new Error('context_path must be absolute');
   if (!paths) throw new Error('paths is required');
   const ts = iso(now);
+  const normalizedConstraints = normalizeConstraints(constraints);
   return {
     kind: 'agent_hub.cc_run_manifest',
     run_id,
@@ -57,6 +60,7 @@ export function buildInitialManifest({
     effort,
     status: 'starting',
     paths,
+    constraints: normalizedConstraints,
     history: [
       { status: 'starting', ts },
     ],

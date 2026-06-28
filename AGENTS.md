@@ -54,9 +54,11 @@ agent-hub/
 | 4 | codex-worker · Codex `codex exec` lane | ✅ |
 | 5 | Runtime Orchestrator · 单 CC session 编排（run manifest + watcher + suggestion routing + evidence archive）★ Alex 核心诉求 | ✅ MVP slices 1-6 + fake E2E smoke |
 | 6 | review-worker gate-runner + routing registry/policy + NATS event publishing | ✅ Slice 1-5 |
-| 7 | omp-worker · OMP profile lifecycle manager（registry/discover/render/validate/audit） | 🟡 Slice 1-8（registry + discover + render + apply + validate helpers；Slice 6 = metadata-only audit/event helpers + review-worker OMP lifecycle 路由识别；Slice 7 = fail-closed runtime entry `src/index.js`（纯 JS、无 fs/子进程/网络、不读运行时环境表，execution-shaped/未知请求一律 `execute=false` unsupported，带监控契约）；Slice 8 = typed lifecycle envelope `src/envelope.js`（`validateOmpLifecycleEnvelope`，纯/metadata-only，强制 `type:'omp.lifecycle'` + `execute/live/cross_profile===false`，拒绝未知 action 与 forbidden 内容字段且不回显；review-worker 在 regex 之前先识别 typed envelope；injected fake publisher smoke），全部 `execute=false`，omp 运行时 lane 仍未注册） |
-| 8 | ssh-worker PoC · 自有远程执行（不依赖 askills） | ⬜ |
+| 7 | omp-worker · OMP profile lifecycle manager（registry/discover/render/validate/audit） | ✅ Slice 1-9 Done |
+| 8 | ssh-worker PoC · 自有远程执行（不依赖 askills） | 🟡 Slice 1-3 Done（SSH 真实化跳过） |
 | 9 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
+| — | 本机问题 · iii-sdk 升级 0.20.0 + 兼容性层 `iii-compat.js` | ✅ `3f9bfdd` |
+| — | 流马吸收 · `run-constraints.mjs`（Task5W2H 约束模型） | ✅ 本 commit |
 
 ## Worker lane 分工
 
