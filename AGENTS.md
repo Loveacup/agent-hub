@@ -58,7 +58,8 @@ agent-hub/
 | 8 | ssh-worker PoC · 自有远程执行（不依赖 askills） | 🟡 Slice 1-3 Done（SSH 真实化跳过） |
 | 9 | askills integration gate · 治理增强（只读 preflight） | ⬜ |
 | — | 本机问题 · iii-sdk 升级 0.20.0 + 兼容性层 `iii-compat.js` | ✅ `3f9bfdd` |
-| — | 流马吸收 · `run-constraints.mjs`（Task5W2H 约束模型） | ✅ 本 commit |
+| — | 流马吸收 · `run-constraints.mjs`（Task5W2H 约束模型） | ✅ `67734f6` |
+| — | H6 多 worker 并行 · `call-parallel.mjs` + `parallel-runner.mjs` | ✅ `262b59f` |
 
 ## Worker lane 分工
 
