@@ -33,3 +33,13 @@
 2026-06-28 16:45:15 INFO: cleanup finished
 2026-06-28 17:00:20 WARN: iii_pid=97120, zombies=5
 2026-06-28 17:00:20 INFO: cleanup finished
+2026-06-28 17:15:17 WARN: iii_pid=97120, zombies=5
+2026-06-28 17:15:17 INFO: cleanup finished
+2026-06-28 17:30:16 WARN: iii_pid=97120, zombies=5
+2026-06-28 17:30:16 INFO: cleanup finished
+2026-06-28 17:45:18 WARN: iii_pid=97120, zombies=5
+2026-06-28 17:45:18 INFO: cleanup finished
+2026-06-28 18:00:15 WARN: iii_pid=97120, zombies=5
+2026-06-28 18:00:15 INFO: cleanup finished
+2026-06-28 18:15:12 WARN: iii_pid=97120, zombies=5
+2026-06-28 18:15:12 INFO: cleanup finished
