@@ -19,3 +19,7 @@
 *本文件由 iii-zombie-watchdog.sh 自动追加*
 2026-06-28 16:04:22 WARN: iii_pid=97120, zombies=4
 2026-06-28 16:04:22 INFO: cleanup finished
+2026-06-28 16:15:11 WARN: iii_pid=97120, zombies=5
+2026-06-28 16:15:11 INFO: cleanup finished
+2026-06-28 16:30:17 WARN: iii_pid=97120, zombies=5
+2026-06-28 16:30:18 INFO: cleanup finished
