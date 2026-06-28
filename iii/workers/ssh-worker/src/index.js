@@ -1,9 +1,17 @@
-// Phase 8 Slice 1 — ssh-worker fail-closed runtime entry.
+// Phase 8 Slice 1+2 — ssh-worker fail-closed runtime entry.
 //
 // This is the importable worker entry referenced by package.json
 // (`dev`/`start`: `node src/index.js`). It exposes static metadata + a
-// fail-closed control plane ONLY. It deliberately does NOT enable any remote
-// SSH execution.
+// fail-closed control plane ONLY. It deliberately does NOT enable any real
+// remote SSH execution.
+//
+// Slice 2 adds the MOCKED control-plane shapes of the remote-execution lane:
+// `acquire_remote` allocates an in-memory session HANDLE (session.js) and
+// `execute_remote` ACCEPTS a turn asynchronously (remote.js), calling an
+// injected fake publisher. Neither touches a real runtime — both keep
+// execute:false (nothing is actually executed; "accepted" is async acceptance
+// only) and never echo the request context/model/secrets. The host registry,
+// session store and publisher are all CALLER-INJECTED via `deps`.
 //
 // Fail-closed BY CONSTRUCTION:
 //   - imports NO I/O capability (no filesystem, subprocess, or socket modules),
@@ -28,6 +36,7 @@
 // but NOT intervenable.
 
 import { listHosts } from './registry.js';
+import { acquireRemote, executeRemote } from './remote.js';
 
 const METADATA_KIND = 'ssh.worker.metadata';
 const CAPABILITIES_KIND = 'ssh.worker.capabilities';
@@ -41,19 +50,21 @@ const HOST_LIST_KIND = 'ssh.worker.host_list';
 const UNSUPPORTED_DECISION_CODE = 'ssh_remote_execution_unsupported';
 
 // Safe metadata/control-plane capabilities this worker can serve without any
-// remote runtime — descriptive/read-only helpers, never execution.
+// real remote runtime. The first four are descriptive/read-only helpers;
+// acquire_remote/execute_remote are the MOCKED remote-lane shapes (Slice 2) —
+// they allocate/accept against injected collaborators but never execute.
 const SUPPORTED_CAPABILITIES = [
   'host_registry_validation',
   'list_hosts',
   'preflight_readonly',
   'subject_sanitization',
+  'acquire_remote',
+  'execute_remote',
 ];
 
 // Execution-shaped capabilities that are explicitly NOT supported. The runtime
 // entry fails closed against every one of these.
 const UNSUPPORTED_CAPABILITIES = [
-  'acquire_remote',
-  'execute_remote',
   'terminate_remote',
   'remote_file_write',
   'remote_codex_exec',
@@ -62,8 +73,17 @@ const UNSUPPORTED_CAPABILITIES = [
 ];
 
 // Allowlisted safe control-plane request types. Anything not in this set — in
-// particular any execution-shaped or unknown request — fails closed.
-const SAFE_REQUEST_TYPES = new Set(['metadata', 'capabilities', 'contract', 'health', 'list_hosts']);
+// particular any execution-shaped or unknown request — fails closed. The mocked
+// remote-lane types (acquire_remote/execute_remote) dispatch to remote.js.
+const SAFE_REQUEST_TYPES = new Set([
+  'metadata',
+  'capabilities',
+  'contract',
+  'health',
+  'list_hosts',
+  'acquire_remote',
+  'execute_remote',
+]);
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -156,7 +176,12 @@ function safeRequestType(request) {
 // Fail-closed response for any execution-shaped or unknown request. No raw
 // request body/payload/secret is ever copied out — only a sanitized type label.
 export function handleUnsupportedExecution(request = {}) {
-  const requested_type = safeRequestType(request);
+  let requested_type = 'unknown';
+  try {
+    requested_type = safeRequestType(request);
+  } catch {
+    // A malicious request object with a throwing getter — fail closed silently.
+  }
   return {
     ok: false,
     kind: UNSUPPORTED_KIND,
@@ -171,16 +196,77 @@ export function handleUnsupportedExecution(request = {}) {
   };
 }
 
+// Attach the mandatory monitorability contract to a mocked remote-lane result
+// and FORCE execute:false. The remote orchestrators own ok/decision_code/shape;
+// the entry owns the control-plane invariant. Only the orchestrator's own result
+// fields are spread out — never the raw request — so no payload can leak.
+function wrapRemote(result, type) {
+  const base = isPlainObject(result) ? result : {};
+  return { ...base, type, execute: false, control_plane: controlPlane() };
+}
+
+// Defense in depth: a malicious injected collaborator (e.g. a registry/host with
+// a throwing getter, or a session store whose method throws) must not bubble out
+// of the dispatcher. The remote orchestrators already fail closed around the
+// session store; this catch covers anything they don't (e.g. a getter that
+// throws while the registry is read). No raw request is ever copied out.
+function injectedRemoteFail(type) {
+  return {
+    ok: false,
+    kind: type === 'acquire_remote' ? 'ssh.remote.acquire' : 'ssh.remote.execute',
+    execute: false,
+    accepted: false,
+    decision_code: 'injected_collaborator_failed',
+    metadata_only: true,
+    redacted: true,
+    published: false,
+  };
+}
+
 // Dispatch a control-plane request. Allowlisted safe types return static
-// metadata (and, for list_hosts, a safe registry projection); EVERYTHING else
-// (execution-shaped or unknown) fails closed via handleUnsupportedExecution.
-// Every return keeps execute:false. `deps` carries caller-injected data
-// (e.g. { registry }) — the entry never reads it from disk.
+// metadata (and, for list_hosts, a safe registry projection); the mocked
+// remote-lane types (acquire_remote/execute_remote) dispatch to remote.js with
+// injected deps; EVERYTHING else (execution-shaped or unknown) fails closed via
+// handleUnsupportedExecution. Every return keeps execute:false. `deps` carries
+// caller-injected collaborators (e.g. { registry, sessions, publish }) — the
+// entry never reads them from disk and never opens SSH/NATS itself.
 export function handleControlPlaneRequest(request = {}, deps = {}) {
+  try {
+    return _handleControlPlaneRequest(request, deps);
+  } catch {
+    // Defense in depth: any throwing injected collaborator (malicious getter on
+    // request, deps, registry, etc.) must not bubble out of the worker entry.
+    return handleUnsupportedExecution(request);
+  }
+}
+
+function _handleControlPlaneRequest(request, deps) {
   const type = isPlainObject(request) && typeof request.type === 'string' ? request.type : '';
 
   if (!SAFE_REQUEST_TYPES.has(type)) {
     return handleUnsupportedExecution(request);
+  }
+
+  // Mocked remote-execution lane — no real SSH/NATS, execute:false enforced.
+  // Dispatch is wrapped fail-closed: a throwing injected collaborator yields a
+  // structured 'injected_collaborator_failed' result, never an exception.
+  if (type === 'acquire_remote') {
+    let result;
+    try {
+      result = acquireRemote(request, deps);
+    } catch {
+      result = injectedRemoteFail(type);
+    }
+    return wrapRemote(result, type);
+  }
+  if (type === 'execute_remote') {
+    let result;
+    try {
+      result = executeRemote(request, deps);
+    } catch {
+      result = injectedRemoteFail(type);
+    }
+    return wrapRemote(result, type);
   }
 
   let result;
@@ -198,22 +284,16 @@ export function handleControlPlaneRequest(request = {}, deps = {}) {
       result = healthCheck();
       break;
     case 'list_hosts':
-      result = handleListHosts(deps);
+      try {
+        result = handleListHosts(deps);
+      } catch {
+        return handleUnsupportedExecution(request);
+      }
       break;
     default:
       return handleUnsupportedExecution(request);
   }
-
-  return {
-    ok: true,
-    kind: CONTROL_PLANE_KIND,
-    type,
-    execute: false,
-    metadata_only: true,
-    redacted: true,
-    control_plane: controlPlane(),
-    result,
-  };
+  return { ok: true, kind: CONTROL_PLANE_KIND, type, execute: false, result, control_plane: controlPlane() };
 }
 
 // Plan alias — the slice contract refers to this dispatcher as handleRequest.

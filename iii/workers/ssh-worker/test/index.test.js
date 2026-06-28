@@ -60,7 +60,10 @@ test('getCapabilities marks remote execution caps unsupported', () => {
   const caps = getCapabilities();
   assert.equal(caps.kind, 'ssh.worker.capabilities');
   assert.equal(caps.execute, false);
-  for (const u of ['acquire_remote', 'execute_remote', 'terminate_remote', 'remote_file_write', 'remote_codex_exec', 'nats_publish', 'askills_call']) {
+  // Slice 2 promotes acquire_remote/execute_remote to MOCKED supported caps
+  // (no real runtime, execute:false) — see test/index.slice2.test.js. The
+  // remaining execution-shaped caps stay fail-closed.
+  for (const u of ['terminate_remote', 'remote_file_write', 'remote_codex_exec', 'nats_publish', 'askills_call']) {
     assert.ok(caps.unsupported.includes(u), `unsupported must include ${u}`);
   }
   for (const s of ['host_registry_validation', 'list_hosts', 'preflight_readonly', 'subject_sanitization']) {
