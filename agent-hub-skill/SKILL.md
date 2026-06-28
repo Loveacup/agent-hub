@@ -50,7 +50,7 @@ license: Apache-2.0
 
 **Phase 0-4c ✅**
 
-- iii Engine v0.19.7 + NATS Server v2.x 已安装
+- iii Engine 二进制 v0.19.7 + worker SDK `iii-sdk` v0.20.0 + NATS Server v2.x 已安装（详见 `iii/workers/shared/iii-compat.js`）
 - usage-worker / gc-worker / cc-worker / codex-worker 均已接入 iii
 - codex-worker 已支持真实 `codex exec` spawn、stdout JSONL 捕获、last-message byte-match
 - iii VM 内 Codex 出网需走宿主 Surge：worker 会把 `127.0.0.1:6152` 改写为 `100.96.0.1:6152`

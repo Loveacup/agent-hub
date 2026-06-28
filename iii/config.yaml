@@ -1,5 +1,5 @@
 # agent-hub · iii Engine Config
-# iii v0.19.7
+# iii worker SDK v0.20.0 (engine binary still v0.19.7 until SIGCHLD fix released)
 # Generated shape verified with `iii project init --skip-iii` on 2026-06-25.
 # Engine WebSocket default: ws://localhost:49134
 
