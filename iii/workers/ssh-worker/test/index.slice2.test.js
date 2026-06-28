@@ -45,7 +45,7 @@ test('capabilities now advertise acquire_remote/execute_remote as supported (moc
     assert.ok(!caps.unsupported.includes(s), `unsupported must not include ${s}`);
   }
   // execution-shaped caps NOT in Slice 2 scope stay unsupported
-  for (const u of ['terminate_remote', 'remote_file_write', 'remote_codex_exec', 'nats_publish', 'askills_call']) {
+  for (const u of ['remote_file_write', 'remote_codex_exec', 'nats_publish', 'askills_call']) {
     assert.ok(caps.unsupported.includes(u), `unsupported must include ${u}`);
   }
   assert.equal(caps.execute, false);

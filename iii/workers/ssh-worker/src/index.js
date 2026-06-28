@@ -36,7 +36,7 @@
 // but NOT intervenable.
 
 import { listHosts } from './registry.js';
-import { acquireRemote, executeRemote } from './remote.js';
+import { acquireRemote, executeRemote, statusRemote, releaseRemote, terminateRemote } from './remote.js';
 
 const METADATA_KIND = 'ssh.worker.metadata';
 const CAPABILITIES_KIND = 'ssh.worker.capabilities';
@@ -60,12 +60,14 @@ const SUPPORTED_CAPABILITIES = [
   'subject_sanitization',
   'acquire_remote',
   'execute_remote',
+  'status',
+  'release_remote',
+  'terminate_remote',
 ];
 
 // Execution-shaped capabilities that are explicitly NOT supported. The runtime
 // entry fails closed against every one of these.
 const UNSUPPORTED_CAPABILITIES = [
-  'terminate_remote',
   'remote_file_write',
   'remote_codex_exec',
   'nats_publish',
@@ -74,7 +76,7 @@ const UNSUPPORTED_CAPABILITIES = [
 
 // Allowlisted safe control-plane request types. Anything not in this set — in
 // particular any execution-shaped or unknown request — fails closed. The mocked
-// remote-lane types (acquire_remote/execute_remote) dispatch to remote.js.
+// remote-lane types dispatch to remote.js (see REMOTE_HANDLERS).
 const SAFE_REQUEST_TYPES = new Set([
   'metadata',
   'capabilities',
@@ -83,7 +85,31 @@ const SAFE_REQUEST_TYPES = new Set([
   'list_hosts',
   'acquire_remote',
   'execute_remote',
+  'status',
+  'release_remote',
+  'terminate_remote',
 ]);
+
+// The MOCKED remote-execution lane: request type -> orchestrator (remote.js).
+// All dispatch through a single fail-closed wrapper below; none touch a real
+// runtime and every result is forced to execute:false.
+const REMOTE_HANDLERS = {
+  acquire_remote: acquireRemote,
+  execute_remote: executeRemote,
+  status: statusRemote,
+  release_remote: releaseRemote,
+  terminate_remote: terminateRemote,
+};
+
+// Kind label per remote type, used to shape an injected-collaborator failure
+// when an orchestrator's own guards are bypassed (e.g. a throwing deps getter).
+const REMOTE_KINDS = {
+  acquire_remote: 'ssh.remote.acquire',
+  execute_remote: 'ssh.remote.execute',
+  status: 'ssh.remote.status',
+  release_remote: 'ssh.remote.release',
+  terminate_remote: 'ssh.remote.terminate',
+};
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -213,7 +239,7 @@ function wrapRemote(result, type) {
 function injectedRemoteFail(type) {
   return {
     ok: false,
-    kind: type === 'acquire_remote' ? 'ssh.remote.acquire' : 'ssh.remote.execute',
+    kind: REMOTE_KINDS[type] || 'ssh.remote.execute',
     execute: false,
     accepted: false,
     decision_code: 'injected_collaborator_failed',
@@ -250,19 +276,11 @@ function _handleControlPlaneRequest(request, deps) {
   // Mocked remote-execution lane — no real SSH/NATS, execute:false enforced.
   // Dispatch is wrapped fail-closed: a throwing injected collaborator yields a
   // structured 'injected_collaborator_failed' result, never an exception.
-  if (type === 'acquire_remote') {
+  const remoteHandler = REMOTE_HANDLERS[type];
+  if (remoteHandler) {
     let result;
     try {
-      result = acquireRemote(request, deps);
-    } catch {
-      result = injectedRemoteFail(type);
-    }
-    return wrapRemote(result, type);
-  }
-  if (type === 'execute_remote') {
-    let result;
-    try {
-      result = executeRemote(request, deps);
+      result = remoteHandler(request, deps);
     } catch {
       result = injectedRemoteFail(type);
     }

@@ -31,6 +31,9 @@ import { buildDeviceSubject } from './subject.js';
 
 const ACQUIRE_KIND = 'ssh.remote.acquire';
 const EXECUTE_KIND = 'ssh.remote.execute';
+const STATUS_KIND = 'ssh.remote.status';
+const RELEASE_KIND = 'ssh.remote.release';
+const TERMINATE_KIND = 'ssh.remote.terminate';
 const SAFE_TOKEN_RE = /^[A-Za-z0-9-]+$/;
 
 function isPlainObject(value) {
@@ -60,6 +63,27 @@ function safePublish(publish, subject, event) {
   } catch {
     return false;
   }
+}
+
+// Publish a SAFE device lifecycle event on the session's status subject. Builds
+// the subject via the sanitizer; a malformed component or missing/throwing
+// publisher yields published:false. Never throws, never alters the decision.
+function publishLifecycle(publish, session, event) {
+  const subjectRes = buildDeviceSubject({
+    device_id: session.device_id,
+    runtime: session.runtime,
+    session: session.remote_session_id,
+    verb: 'status',
+  });
+  if (!subjectRes.ok) return { subject: null, published: false };
+  const published = safePublish(publish, subjectRes.subject, {
+    kind: 'ssh.device.event',
+    event,
+    remote_session_id: session.remote_session_id,
+    device_id: session.device_id,
+    runtime: session.runtime,
+  });
+  return { subject: subjectRes.subject, published };
 }
 
 // acquire_remote — allocate a remote CLI session HANDLE against an enabled host
@@ -200,6 +224,179 @@ export function executeRemote(input, deps) {
     runtime: session.runtime,
     subject: statusSubject.ok ? statusSubject.subject : null,
     result_subject: turnDone.ok ? turnDone.subject : null,
+    metadata_only: true,
+    redacted: true,
+    published,
+  };
+}
+
+// status — report the SAFE lifecycle snapshot of remote session handles, with an
+// optional device_id filter. Read-only: it never executes, never accepts, never
+// publishes, and never exposes connection details (the store projects ids +
+// lifecycle only). Fail-closed around the injected session store.
+export function statusRemote(input, deps) {
+  const src = isPlainObject(input) ? input : {};
+  let sessions;
+  try {
+    const d = isPlainObject(deps) ? deps : {};
+    sessions = d.sessions;
+  } catch {
+    return fail(STATUS_KIND, 'injected_collaborator_failed');
+  }
+
+  if (!sessions || typeof sessions.status !== 'function') {
+    return fail(STATUS_KIND, 'no_session_store');
+  }
+  const query = {};
+  if (src.device_id !== undefined) query.device_id = src.device_id;
+
+  let res;
+  try {
+    res = sessions.status(query);
+  } catch {
+    return fail(STATUS_KIND, 'injected_collaborator_failed');
+  }
+  if (!res || res.ok !== true) {
+    return fail(STATUS_KIND, (res && res.decision_code) || 'status_failed');
+  }
+  const list = Array.isArray(res.sessions) ? res.sessions : [];
+  return {
+    ok: true,
+    kind: STATUS_KIND,
+    execute: false,
+    accepted: false,
+    decision_code: 'remote_status_reported',
+    sessions: list,
+    count: list.length,
+    metadata_only: true,
+    redacted: true,
+    published: false,
+  };
+}
+
+// release_remote — SOFT-release a session handle (mark it released, allow the
+// device to be re-acquired) and publish a SAFE `released` lifecycle event. Does
+// NOT execute and never echoes any request context. Fail-closed around the store.
+export function releaseRemote(input, deps) {
+  const src = isPlainObject(input) ? input : {};
+  let sessions, publish;
+  try {
+    const d = isPlainObject(deps) ? deps : {};
+    sessions = d.sessions;
+    publish = d.publish;
+  } catch {
+    return fail(RELEASE_KIND, 'injected_collaborator_failed');
+  }
+  const { remote_session_id } = src;
+
+  if (!sessions || typeof sessions.release !== 'function') {
+    return fail(RELEASE_KIND, 'no_session_store');
+  }
+  let res;
+  try {
+    res = sessions.release(remote_session_id);
+  } catch {
+    return fail(RELEASE_KIND, 'injected_collaborator_failed');
+  }
+  if (!res || res.ok !== true) {
+    return fail(RELEASE_KIND, (res && res.decision_code) || 'release_failed');
+  }
+  const { session } = res;
+  const { subject, published } = publishLifecycle(publish, session, 'released');
+
+  return {
+    ok: true,
+    kind: RELEASE_KIND,
+    execute: false,
+    accepted: false,
+    ack: true,
+    decision_code: 'remote_session_released',
+    remote_session_id: session.remote_session_id,
+    device_id: session.device_id,
+    runtime: session.runtime,
+    subject,
+    metadata_only: true,
+    redacted: true,
+    published,
+  };
+}
+
+// terminate_remote — HARD-terminate a session handle in ANY state (active,
+// released, or orphaned). It first reaps the (mock) remote process via the
+// INJECTED `terminator` — no real signal is sent here — THEN deletes the handle
+// and publishes a SAFE `terminated` event. A missing/throwing terminator yields
+// reaped:false but the handle is still dropped (the host-side leak is always
+// cleaned). Fail-closed around every injected collaborator.
+export function terminateRemote(input, deps) {
+  const src = isPlainObject(input) ? input : {};
+  let sessions, publish, terminator;
+  try {
+    const d = isPlainObject(deps) ? deps : {};
+    sessions = d.sessions;
+    publish = d.publish;
+    terminator = d.terminator;
+  } catch {
+    return fail(TERMINATE_KIND, 'injected_collaborator_failed');
+  }
+  const { remote_session_id } = src;
+
+  if (!sessions || typeof sessions.peek !== 'function' || typeof sessions.terminate !== 'function') {
+    return fail(TERMINATE_KIND, 'no_session_store');
+  }
+  // Resolve the handle (in any state) BEFORE reaping so the terminator/publish
+  // can address the right device/runtime/session.
+  let peeked;
+  try {
+    peeked = sessions.peek(remote_session_id);
+  } catch {
+    return fail(TERMINATE_KIND, 'injected_collaborator_failed');
+  }
+  if (!peeked || peeked.ok !== true) {
+    return fail(TERMINATE_KIND, (peeked && peeked.decision_code) || 'session_not_found');
+  }
+  const { session } = peeked;
+
+  // Reap the remote process via the injected mock (no real signal). A missing or
+  // throwing terminator must not block the host-side cleanup below.
+  let reaped = false;
+  if (typeof terminator === 'function') {
+    try {
+      const tr = terminator({
+        remote_session_id: session.remote_session_id,
+        device_id: session.device_id,
+        runtime: session.runtime,
+      });
+      reaped = tr === true || (isPlainObject(tr) && tr.ok === true);
+    } catch {
+      reaped = false;
+    }
+  }
+
+  // Drop the host-side handle.
+  let term;
+  try {
+    term = sessions.terminate(remote_session_id);
+  } catch {
+    return fail(TERMINATE_KIND, 'injected_collaborator_failed');
+  }
+  if (!term || term.ok !== true) {
+    return fail(TERMINATE_KIND, (term && term.decision_code) || 'terminate_failed');
+  }
+
+  const { subject, published } = publishLifecycle(publish, session, 'terminated');
+
+  return {
+    ok: true,
+    kind: TERMINATE_KIND,
+    execute: false,
+    accepted: false,
+    ack: true,
+    reaped,
+    decision_code: 'remote_session_terminated',
+    remote_session_id: session.remote_session_id,
+    device_id: session.device_id,
+    runtime: session.runtime,
+    subject,
     metadata_only: true,
     redacted: true,
     published,
