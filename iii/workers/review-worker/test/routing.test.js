@@ -171,3 +171,23 @@ test('decideRoute reports publish_failed but preserves decision when publisher t
   assert.equal(res.publish_status, 'publish_failed');
   assert.match(res.publish_error, /nats offline/);
 });
+
+test('capability-driven — hypothetical new lane gets correct control plane', async () => {
+  const catalog = {
+    ...defaultWorkerCatalog(),
+    'ssh-executor': {
+      available: true,
+      capabilities: ['monitor', 'intervene', 'exec', 'remote'],
+      reason: 'hypothetical remote execution lane',
+    },
+  };
+  const res = await decideRoute({
+    task: 'monitor a Claude Code session and intervene',
+    constraints: { requires_realtime: true },
+    available_workers: catalog,
+  });
+  assert.equal(res.lane, 'cc');
+  assert.equal(res.control_plane.monitorable, true);
+  assert.equal(res.control_plane.intervenable, true);
+  assert.equal(res.control_plane.status, 'available');
+});

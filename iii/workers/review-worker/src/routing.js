@@ -36,7 +36,7 @@ export function defaultWorkerCatalog() {
     },
     omp: {
       available: false,
-      capabilities: ['multi_profile', 'fanout'],
+      capabilities: ['multi_profile', 'fanout', 'monitor'],
       reason: 'omp lane not implemented yet; OMP is deliberately later',
     },
   };
@@ -66,38 +66,48 @@ function mergedCatalog(available_workers = {}) {
 // intervention_required are policy invariants (always true); monitorable /
 // intervenable / runtime_available describe what the named lane can actually do
 // right now. This is metadata only — it never enables a runtime.
+//
+// Vibeyard-inspired (2026-06-29): behavior is derived from worker-declared
+// capabilities, NOT from a hardcoded switch on lane names. Adding a new worker
+// lane means declaring its capabilities in the catalog; no routing code change.
 function controlPlaneForLane(lane, catalog) {
   const entry = catalog?.[lane] ?? {};
   const caps = entry.capabilities ?? [];
   const available = entry.available === true;
-  const hasMonitor = caps.includes('monitor');
-  const hasIntervene = caps.includes('intervene');
   const base = { monitoring_required: true, intervention_required: true };
 
-  switch (lane) {
-    case 'cc':
-    case 'codex': {
-      const monitorable = available && hasMonitor;
-      const intervenable = available && hasIntervene;
-      return {
-        ...base,
-        monitorable,
-        intervenable,
-        runtime_available: available,
-        status: monitorable && intervenable ? 'available' : 'unavailable',
-      };
-    }
-    case 'review':
-      // The review/gate lane is always observable but can only gate/deny — it
-      // cannot steer a running agent, so intervention is review-only.
-      return { ...base, monitorable: true, intervenable: false, runtime_available: available, status: 'review_only' };
-    case 'omp':
-      // OMP runtime stays unregistered: monitorable as control-plane metadata
-      // only, never intervenable until a runtime exists.
-      return { ...base, monitorable: true, intervenable: available, runtime_available: available, status: available ? 'available' : 'unavailable' };
-    default:
-      return { ...base, monitorable: false, intervenable: false, runtime_available: available, status: 'unsupported' };
+  const hasMonitor = caps.includes('monitor');
+  const hasIntervene = caps.includes('intervene');
+
+  // Governance lanes (review/gate) + profile managers: always observable
+  // because they ARE the control plane or profile lifecycle backbone.
+  const isReview = caps.includes('danger_scan') || caps.includes('verify')
+    || caps.includes('gate') || caps.includes('counter');
+  const isProfileManager = caps.includes('multi_profile');
+  const alwaysMonitorable = isReview || isProfileManager;
+
+  const monitorable = alwaysMonitorable ? true : (available && hasMonitor);
+
+  // Review lanes never intervene. Profile managers can intervene when runtime
+  // is available. Production lanes follow the declared capability.
+  const intervenable = isReview ? false
+    : isProfileManager ? available
+    : (available && hasIntervene);
+
+  let status;
+  if (!available) {
+    status = 'unavailable';
+  } else if (isReview) {
+    status = 'review_only';
+  } else if (monitorable && intervenable) {
+    status = 'available';
+  } else if (monitorable) {
+    status = 'monitor_only';
+  } else {
+    status = 'unsupported';
   }
+
+  return { ...base, monitorable, intervenable, runtime_available: available, status };
 }
 
 function decision({ lane, reason, decision_code, requires_review = false, constraints, catalog, run_id = null, control_lane = null }) {
